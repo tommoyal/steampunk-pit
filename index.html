@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>1577 Steampunk Pit</title>
+<meta name="theme-color" content="#14110f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="1577 Pit">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="brand"><img src="icon.svg" alt=""><span><b>1577</b> STEAMPUNK <em>PIT</em></span></div>
+    <div id="evname" class="evname"></div>
+    <div class="topright">
+      <span id="soundChip" class="chip-btn" hidden data-act="sound-unlock">🔇 Tap for sound</span>
+      <span id="syncChip" class="sync"></span>
+      <span id="clock" class="clock"></span>
+      <button id="fsBtn" class="icon-btn tv-only" data-act="fullscreen" title="Fullscreen">⛶</button>
+      <a class="icon-btn tv-only" href="#settings" title="Settings">⚙</a>
+    </div>
+  </header>
+
+  <div id="stage">
+    <section id="streamBox">
+      <div id="streamFrameWrap"><div class="stream-empty">Loading stream…</div></div>
+      <div id="streamCtl"></div>
+    </section>
+    <main id="view"></main>
+    <aside id="tvSide"></aside>
+    <section id="tvStrip"></section>
+  </div>
+
+  <nav id="nav">
+    <a href="#matches" data-v="matches"><i>🗓</i>Matches</a>
+    <a href="#checklist" data-v="checklist"><i>✅</i>Checklist</a>
+    <a href="#batteries" data-v="batteries"><i>🔋</i>Batteries</a>
+    <a href="#debrief" data-v="debrief"><i>📝</i>Debrief</a>
+    <a href="#rankings" data-v="rankings"><i>🏆</i>Rankings</a>
+    <a href="#settings" data-v="settings"><i>⚙</i>Settings</a>
+  </nav>
+
+  <div id="alertBar" hidden></div>
+  <div id="toasts"></div>
+  <div id="modal" hidden></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
