@@ -427,7 +427,7 @@ function matchRow(m, M) {
 function notices(M) {
   const out = [];
   if (S.demo) out.push(`<div class="notice demo"><b>Demo mode</b> — a fake live event so you can try everything. Switch it off in <a href="#settings">Settings</a> when your event is set.</div>`);
-  for (const e of Object.values(D.errors || {})) out.push(`<div class="notice err">${esc(e)}</div>`);
+  for (const [k, e] of Object.entries(D.errors || {})) if (k !== 'sb') out.push(`<div class="notice err">${esc(e)}</div>`);
   if (!navigator.onLine) out.push(`<div class="notice info">Offline — showing data saved at ${hm(D.updated?.tba)}. It will update when the connection is back.</div>`);
   if (M.delay != null && Math.abs(M.delay) >= 3 * 60000) out.push(`<div class="notice info">Field is running <b>${Math.round(Math.abs(M.delay) / 60000)} min ${M.delay > 0 ? 'behind' : 'ahead of'}</b> schedule.</div>`);
   return out.join('');
@@ -574,7 +574,7 @@ function renderTV(M) {
   const ck = M.next ? checkProgress(M.next) : null;
   const bl = battList().filter(b => b.status !== 'retired');
   const now = Date.now(), l = M.last;
-  const errs = Object.values(D.errors || {});
+  const errs = Object.entries(D.errors || {}).filter(([k]) => k !== 'sb').map(([, e]) => e);
   $('#tvStrip').innerHTML = `
     <div class="card">${rankCardHTML(M, true)}</div>
     <div class="card"><h3>Robot ${M.next ? '· ' + esc(shortLabel(M.next.label)) : ''}</h3>
