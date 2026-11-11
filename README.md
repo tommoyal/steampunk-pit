@@ -42,4 +42,4 @@ The competition pit app for FRC Team 1577. It runs as a full-screen dashboard on
 7. **Pit TV:** open the link in Chrome, tick **Pit TV mode** in Settings, click once anywhere to allow sound, and press ⛶ for fullscreen. The screen stays awake.
 
 ## Updating
-Change the files, bump `CACHE` in `sw.js` (`pit-v1` → `pit-v2`) and push. Devices pick up the new version on their next reload.
+Change the files and push. The app always loads the newest files when it's online (it only uses its saved copy when offline), and it reloads itself when a new version is installed. Bumping `CACHE` in `sw.js` is still a good idea so the saved offline copy is refreshed.

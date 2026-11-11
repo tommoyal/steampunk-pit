@@ -1457,7 +1457,12 @@ window.addEventListener('offline', renderTop);
 
 /* ---------------- boot ---------------- */
 (async function boot() {
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    // when a new version is installed, reload once so it shows up right away
+    let reloaded = false, hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } hadController = true; });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => { r.update().catch(() => { }); setInterval(() => r.update().catch(() => { }), 30 * 60000); }).catch(() => { });
+  }
   route();
   ensureTopics();
   await Store.init();
