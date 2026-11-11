@@ -25,19 +25,11 @@ The competition pit app for FRC Team 1577. It runs as a full-screen dashboard on
 2. **TBA key (required):** thebluealliance.com → Account → Read API Keys → add a key, then paste it in Settings.
 3. **Nexus key (optional):** frc.nexus → API. This gives live queue times.
 4. **Event:** in Settings, set Season, then press **Find our events** and tap the event. Turn **Demo mode** off and press **Save**.
-5. **Team sync (optional, recommended):** this shares the checklist, batteries and debriefs between the TV and phones.
-   - Go to console.firebase.google.com → Add project, with Analytics off.
-   - Build → Firestore Database → Create database (production mode).
-   - Go to Firestore → Rules and paste:
-     ```
-     rules_version = '2';
-     service cloud.firestore {
-       match /databases/{db}/documents {
-         match /teams/1577/{document=**} { allow read, write: if true; }
-       }
-     }
-     ```
-   - Go to Project settings → Your apps → Web (`</>`) → register. Copy the `firebaseConfig = { … }` block into Settings → Team sync, then Save.
+5. **Accounts and team sync:** these are built in, using the team's Firebase project `steampunk-1577-pit`.
+   - Everyone signs up with Google or with email and password. New accounts wait until an admin approves them (⚙ Settings → Team members).
+   - The first person to sign up gets a "Become the team's first admin" button.
+   - Security rules are in `firestore.rules`: only signed-in, approved members can read or write team data.
+   - The pit TV needs an approved account too. A shared "1577 Pit TV" account works well.
 6. **Phones:** Settings → **Copy setup link** and send it to the team chat. Opening the link sets up their app with the same event, keys and sync. Then use "Add to Home Screen".
 7. **Pit TV:** open the link in Chrome, tick **Pit TV mode** in Settings, click once anywhere to allow sound, and press ⛶ for fullscreen. The screen stays awake.
 

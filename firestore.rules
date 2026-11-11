@@ -1,0 +1,36 @@
+rules_version = '2';
+// 1577 Steampunk Pit — only signed-in, admin-approved members can read or write team data.
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signedIn() { return request.auth != null; }
+    function cfgPath(team) { return /databases/$(db)/documents/teams/$(team)/meta/config; }
+    function isAdmin(team) { return signedIn() && exists(cfgPath(team)) && request.auth.uid in get(cfgPath(team)).data.admins; }
+    function approved(team) {
+      return isAdmin(team) || (signedIn()
+        && exists(/databases/$(db)/documents/teams/$(team)/users/$(request.auth.uid))
+        && get(/databases/$(db)/documents/teams/$(team)/users/$(request.auth.uid)).data.status == 'approved');
+    }
+
+    // team settings: the first signed-in person can create it (becoming the first admin); after that only admins change it
+    match /teams/{team}/meta/config {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.admins == [request.auth.uid];
+      allow update, delete: if isAdmin(team);
+    }
+
+    // member accounts: you can create your own as "pending"; only admins approve or change roles
+    match /teams/{team}/users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || approved(team));
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.status == 'pending' && request.resource.data.role == 'member';
+      allow update: if isAdmin(team) || (signedIn() && request.auth.uid == uid
+        && request.resource.data.status == resource.data.status && request.resource.data.role == resource.data.role);
+      allow delete: if isAdmin(team);
+    }
+
+    // everything else (checklists, batteries, debriefs, calls, pits…) — approved members only
+    match /teams/{team}/{col}/{doc} {
+      allow read, write: if approved(team) && !(col in ['users', 'meta']);
+    }
+  }
+}

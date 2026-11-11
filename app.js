@@ -36,6 +36,11 @@ const S = Object.assign({
   ntfyOn: true, ntfySend: null, ntfyServer: 'https://ntfy.sh', ntfyTeam: '', ntfyQueue: '', ntfyMe: ''
 }, LS.get('pit.settings', {}));
 const saveSettings = () => LS.set('pit.settings', S);
+// Team 1577's Firebase project (web config is public by design; access is protected by sign-in + security rules)
+const FIREBASE_DEFAULT = {
+  apiKey: 'AIzaSyBvfeifTy6e9Mq98wL9_RqAxnCBII0lybs', authDomain: 'steampunk-1577-pit.firebaseapp.com', projectId: 'steampunk-1577-pit',
+  storageBucket: 'steampunk-1577-pit.firebasestorage.app', messagingSenderId: '697940599121', appId: '1:697940599121:web:d06a5bceea998075457370'
+};
 const SHARE_KEYS = ['team', 'year', 'eventKey', 'tbaKey', 'nexusKey', 'firebase', 'queueLead', 'alertLead', 'chargeMin', 'streamUrl', 'demo', 'demoPhase', 'checklist', 'roster', 'ntfyOn', 'ntfyServer', 'ntfyTeam', 'ntfyQueue'];
 const evKey = () => S.demo ? 'demo' : String(S.eventKey || '').trim().toLowerCase();
 
@@ -342,7 +347,7 @@ function eventStage(Mo) {
   if (q.length) return 'quals';
   return 'pre';
 }
-const STAGE_LBL = { pre: 'BEFORE QUALS', quals: 'QUALIFICATIONS', selection: 'ALLIANCE SELECTION', playoffs: 'PLAYOFFS', done: 'EVENT COMPLETE' };
+const STAGE_LBL = { pre: 'Before quals', quals: 'Qualifications', selection: 'Alliance selection', playoffs: 'Playoffs', done: 'Event complete' };
 
 /* ---------------- model: our matches, next match, timing ---------------- */
 const teamsKey = (r, b) => { const a = [...r, ...b].filter(Boolean); return a.length === 6 ? a.slice().sort((x, y) => x - y).join(',') : ''; };
@@ -411,12 +416,14 @@ function parseFirebase(txt) {
 const Store = {
   mode: 'local', db: null, err: '', localSubs: {},
   async init() {
-    if (!S.firebase.trim()) { this.mode = 'local'; return; }
+    if (!S.firebase.trim() && !FIREBASE_DEFAULT) { this.mode = 'local'; return; }
     try {
-      const cfg = parseFirebase(S.firebase);
+      const cfg = S.firebase.trim() ? parseFirebase(S.firebase) : FIREBASE_DEFAULT;
+      this.cfg = cfg;
       const v = '10.12.2';
       await loadScript(`https://www.gstatic.com/firebasejs/${v}/firebase-app-compat.js`);
       await loadScript(`https://www.gstatic.com/firebasejs/${v}/firebase-firestore-compat.js`);
+      await loadScript(`https://www.gstatic.com/firebasejs/${v}/firebase-auth-compat.js`);
       if (!firebase.apps.length) firebase.initializeApp(cfg);
       this.db = firebase.firestore();
       try { await this.db.enablePersistence({ synchronizeTabs: true }); } catch { /* another tab or unsupported */ }
@@ -449,7 +456,8 @@ const Store = {
 window.addEventListener('storage', e => {
   if (e.key && e.key.startsWith('pit.store.')) (Store.localSubs[e.key.slice(10)] || []).forEach(f => f());
 });
-const SD = { batteries: {}, check: {}, debrief: {}, calls: {}, members: {}, pits: {}, pitmap: null };
+const SD = { batteries: {}, check: {}, debrief: {}, calls: {}, members: {}, pits: {}, pitmap: null, users: {} };
+function renderAdminBadge() { const b = $('#acctBtn'); if (!b) return; const n = isAdmin() ? Object.values(SD.users).filter(u => u.status === 'pending').length : 0; b.dataset.badge = n || ''; if (n && once('pending-' + n + '-' + Object.keys(SD.users).length)) toast(`${n} new member${n > 1 ? 's' : ''} waiting for approval (⚙ Settings)`); }
 let unsubs = [];
 function subscribeShared() {
   unsubs.forEach(u => { try { u && u(); } catch { } }); unsubs = [];
@@ -457,6 +465,7 @@ function subscribeShared() {
   unsubs.push(Store.watch('batteries', o => { SD.batteries = o; renderAll(); }));
   unsubs.push(Store.watch('calls', o => { SD.calls = o; onCalls(); }));
   unsubs.push(Store.watch('members', o => { SD.members = o; }));
+  unsubs.push(Store.watch('users', o => { SD.users = o; if (current === 'settings') renderAll('nav'); renderAdminBadge(); }));
   unsubs.push(Store.watch('check_' + ev, o => { SD.check = o; renderAll(); }));
   unsubs.push(Store.watch('debrief_' + ev, o => { SD.debrief = o; renderAll(); }));
   unsubs.push(Store.watch('pits_' + ev, o => { SD.pits = o; if (current !== 'pits') renderAll(); else renderPitResults(); }));
@@ -538,11 +547,36 @@ function renderStream() {
 }
 
 /* ---------------- rendering helpers ---------------- */
-function teamTag(n, T) { const p = pitOf(n); return `<span class="tt ${n === T ? 'us' : ''}"><b>${n || '?'}</b><small>${esc(D.teams[n] || '')}${p && n !== T ? ` · 📍${esc(p)}` : ''}</small></span>`; }
+function teamTag(n, T) { const p = n !== T ? pitOf(n) : null, nm = D.teams[n] || ''; return `<span class="tt ${n === T ? 'us' : ''}"><b>${n || '?'}</b><small>${esc(nm)}${p ? `${nm ? ' · ' : ''}Pit ${esc(p)}` : ''}</small></span>`; }
+/* brass pressure gauge: the needle sweeps into the red zone as queue time gets close (30-minute dial) */
+const GAUGE_WIN = 30 * 60000;
+function gaugeFrac(q) { return q ? Math.max(0, Math.min(1, 1 - (q - Date.now()) / GAUGE_WIN)) : 0; }
+function gaugeHTML(m) {
+  const st = m.nx?.status || '', hot = /now queuing|on deck|on field/i.test(st) || (m.queue && Date.now() >= m.queue);
+  const f = hot ? 1 : gaugeFrac(m.queue), ang = -135 + 270 * f;
+  const ticks = Array.from({ length: 11 }, (_, k) => { const a = (-135 + 27 * k) * Math.PI / 180, r1 = k % 5 ? 52 : 49, r2 = 56;
+    return `<line x1="${(60 + r1 * Math.sin(a)).toFixed(1)}" y1="${(60 - r1 * Math.cos(a)).toFixed(1)}" x2="${(60 + r2 * Math.sin(a)).toFixed(1)}" y2="${(60 - r2 * Math.cos(a)).toFixed(1)}"/>`; }).join('');
+  const arc = 'M 26.06 93.94 A 48 48 0 1 1 93.94 93.94';
+  return `<svg class="gauge ${hot ? 'hot' : ''}" viewBox="0 0 120 120" ${m.queue && !hot ? `data-gq="${m.queue}"` : ''} aria-hidden="true">
+    <path class="g-track" d="${arc}" pathLength="100"/><path class="g-red" d="${arc}" pathLength="100" stroke-dasharray="20 100" stroke-dashoffset="-80"/>
+    <path class="g-fill" d="${arc}" pathLength="100" stroke-dasharray="${(f * 100).toFixed(1)} 100"/>
+    <g class="g-ticks">${ticks}</g>
+    <line class="g-needle" x1="60" y1="60" x2="60" y2="22" transform="rotate(${ang.toFixed(1)} 60 60)"/><circle class="g-hub" cx="60" cy="60" r="6"/>
+    <text class="g-time" x="60" y="108" text-anchor="middle">${hot ? 'Go' : m.queue ? fmtCD(m.queue - Date.now()) : '--'}</text></svg>`;
+}
+function updateGauges() {
+  document.querySelectorAll('svg.gauge[data-gq]').forEach(g => {
+    const q = +g.dataset.gq, f = gaugeFrac(q);
+    g.querySelector('.g-fill').setAttribute('stroke-dasharray', `${(f * 100).toFixed(1)} 100`);
+    g.querySelector('.g-needle').setAttribute('transform', `rotate(${(-135 + 270 * f).toFixed(1)} 60 60)`);
+    g.querySelector('.g-time').textContent = fmtCD(q - Date.now());
+    g.classList.toggle('soon', q - Date.now() < S.alertLead * 60000);
+  });
+}
 function queueState(m) {
   const now = Date.now(), st = m.nx?.status || '';
-  if (/now queuing|on deck|on field/i.test(st)) return `<div class="qstate hot">${esc(st.toUpperCase())}</div>`;
-  if (m.queue && now >= m.queue) return `<div class="qstate hot">QUEUE NOW</div>`;
+  if (/now queuing|on deck|on field/i.test(st)) return `<div class="qstate hot">${esc(st)}</div>`;
+  if (m.queue && now >= m.queue) return `<div class="qstate hot">Queue now</div>`;
   if (m.queue) {
     const soon = m.queue - now < S.alertLead * 60000 || /soon/i.test(st);
     return `<div class="qstate ${soon ? 'soon' : ''}"><span class="ql">Queue in</span> <b data-cd="${m.queue}">${fmtCD(m.queue - now)}</b></div>`;
@@ -571,9 +605,9 @@ function nextCard(M) {
   return `<div class="card next-card ${m.color}">
     <div class="nc-head"><div><div class="nc-kicker">Next match</div><div class="nc-label">${esc(m.label)}</div></div>
       <span class="bumper ${m.color}">${m.color.toUpperCase()} ${m.station || ''}</span></div>
-    ${queueState(m)}
+    <div class="nc-gauge">${gaugeHTML(m)}<div class="nc-gtext">${queueState(m)}
     <div class="nc-times">Match ~${hm(m.start)} (in <span data-cd="${m.start}">${fmtCD(m.start - Date.now())}</span>)${m.queue ? ` · queue ~${hm(m.queue)}` : ''}
-      ${m.nx ? ' <span class="src">NEXUS</span>' : m.pred ? ' <span class="src">TBA EST.</span>' : ''}</div>
+      ${m.nx ? ' <span class="src">Nexus</span>' : m.pred ? ' <span class="src">TBA estimate</span>' : ''}</div></div></div>
     ${playoffLine(m, M)}
     <div class="alrow ${m.color}"><span class="alt">With</span>${m.allies.map(n => teamTag(n, M.T)).join('')}</div>
     <div class="alrow ${opp}"><span class="alt">Against</span>${m.opps.map(n => teamTag(n, M.T)).join('')}</div>
@@ -679,7 +713,7 @@ function viewChecklist(M) {
     <div class="seg" style="margin-bottom:10px">${upcoming.map(x => `<button data-act="chk-match" data-k="${esc(x.key)}" class="${x.key === m.key ? 'on' : ''}">${esc(shortLabel(x.label))} · ${hm(x.start)}</button>`).join('')}</div>
     <div class="card">
       <div class="row"><h2 style="margin:0">Checklist — ${esc(m.label)}</h2><span class="sp"></span><span class="muted small">queue ~${hm(m.queue)}</span></div>
-      <div class="bigbumper ${m.color}" style="margin-top:10px">${m.color.toUpperCase()} BUMPERS · STATION ${m.station}</div>
+      <div class="bigbumper ${m.color}" style="margin-top:10px">${m.color === 'red' ? 'Red' : 'Blue'} bumpers, station ${m.station}</div>
       ${ck.done ? '<div class="ready">✓ ROBOT READY</div>' : ''}
       <div class="progress ${ck.done ? 'full' : ''}"><i style="width:${ck.total ? ck.n / ck.total * 100 : 0}%"></i></div>
       <label class="f">Battery for this match</label>
@@ -855,7 +889,7 @@ function viewSettings() {
   const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
   return `<h2>Settings</h2>
   <div class="card"><h3>This device</h3>
-    ${f('member', 'Your name (shows on checklist ticks)', 'text', 'placeholder="e.g. Tom"')}
+    <div class="muted small">Signed in as <b>${esc(Auth.profile?.name || S.member || '?')}</b> (${esc(ROLE_LBL[Auth.profile?.role] || 'member')}). Change your name from the account button in the top bar.</div>
     ${cb('tv', '<b>Pit TV mode</b> — full-screen dashboard, keeps the screen awake')}
     ${cb('sound', 'Alert sounds')}
     <div class="row" style="margin-top:6px"><button class="btn small" data-act="test-alert">Test alert</button>
@@ -894,7 +928,8 @@ function viewSettings() {
     <div class="row" style="margin-top:10px"><button class="btn small" data-act="ntfy-test">Send test to my phone</button>
       <button class="btn small" data-act="ntfy-new" title="Makes new team channels — everyone must re-subscribe">New team channels</button></div>
     <div class="muted small" style="margin-top:6px">Your personal channel is registered with the team under “Your name” (needs team sync). Calls to people without one go to the team channel.</div></div>
-  <div class="card"><h3>Team members</h3><div class="muted small">One name per line — used by “Call to pit”. Each member should put the same name in “Your name” above.</div>
+  ${isAdmin() ? membersPanel() : ''}
+  <div class="card"><h3>Extra names for Call to pit</h3><div class="muted small">Signed-in members are listed automatically. Add extra names here (one per line) for people without an account.</div>
     <textarea data-s="roster" style="min-height:120px" placeholder="Tom\nNoa\nDaniel">${esc((S.roster || []).join('\n'))}</textarea></div>
   <div class="card"><h3>Checklist items</h3><div class="muted small">One per line.</div>
     <textarea data-s="checklist" style="min-height:170px">${esc(S.checklist.join('\n'))}</textarea></div>
@@ -985,14 +1020,24 @@ function renderTop() {
   $('#soundChip').hidden = !(S.sound && (!actx || actx.state !== 'running'));
 }
 let current = 'matches', M = null;
+const GROUP_OF = { matches: 'matches', checklist: 'robot', batteries: 'robot', debrief: 'robot', rankings: 'standings', playoffs: 'standings', pits: 'pits' };
+function subTabs() {
+  const g = GROUP_OF[current];
+  let tabs = null;
+  if (g === 'robot') tabs = [['checklist', 'Checklist'], ['batteries', 'Batteries'], ['debrief', 'Debriefs']];
+  if (g === 'standings') tabs = [['rankings', 'Rankings'], ...(M && ['selection', 'playoffs', 'done'].includes(M.stage) ? [['playoffs', M.stage === 'selection' ? 'Alliance selection' : 'Playoffs']] : [])];
+  if (!tabs || tabs.length < 2) return '';
+  return `<nav class="subtabs" aria-label="Section">${tabs.map(([v, l]) => `<a href="#${v}" class="${v === current ? 'on' : ''}" ${v === current ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>`;
+}
 const VIEWS = { pits: viewPits, playoffs: viewPlayoffs, matches: viewMatches, checklist: viewChecklist, batteries: viewBatteries, debrief: viewDebrief, rankings: viewRankings, settings: viewSettings };
 function renderAll(force) {
   M = buildModel();
   renderTop(); renderStream();
   if (document.body.classList.contains('tv')) renderTV(M);
-  else if ((current !== 'settings' && !(current === 'pits' && document.activeElement?.id === 'pitSearch')) || force === 'nav') $('#view').innerHTML = (S.tv && current !== 'matches' ? '<a class="btn primary backtv" href="#matches">← Back to TV</a>' : '') + (VIEWS[current] || viewMatches)(M);
-  document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === current));
-  const np = $('#navPlayoffs'); if (np) np.hidden = !['selection', 'playoffs', 'done'].includes(M.stage);
+  else if ((current !== 'settings' && !(current === 'pits' && document.activeElement?.id === 'pitSearch')) || force === 'nav') $('#view').innerHTML = (S.tv && current !== 'matches' ? '<a class="btn primary backtv" href="#matches">Back to TV view</a>' : '') + subTabs() + (VIEWS[current] || viewMatches)(M);
+  const grp = GROUP_OF[current] || '';
+  document.querySelectorAll('#nav a').forEach(a => { const on = a.dataset.g === grp; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  const ns = $('#navStandings'); if (ns) ns.setAttribute('href', ['selection', 'playoffs', 'done'].includes(M.stage) ? '#playoffs' : '#rankings');
   initRwins();
 }
 function applyMode() {
@@ -1130,7 +1175,6 @@ async function pushCall(id, to, reason, by) {
   const topic = personal || S.ntfyTeam;
   const title = `📣 ${everyone ? 'EVERYONE' : to.toUpperCase()} — BACK TO THE PIT NOW`;
   const actions = [{ action: 'view', label: 'Open app', url: appUrl() + '#matches' }];
-  if (!everyone && Store.mode === 'cloud') { const a = ackAction(id, to); if (a) actions.unshift(a); }
   return pushPhone(topic, title, `${reason ? reason + ' · ' : ''}called by ${by}`, { priority: 5, tags: ['rotating_light'], actions });
 }
 function registerMember() {
@@ -1169,7 +1213,7 @@ function renderCallFab() {
   fab.classList.toggle('live', n > 0);
 }
 function callModal() {
-  const names = (S.roster || []).filter(Boolean);
+  const names = [...new Set([...Object.values(SD.users || {}).filter(u => u.status === 'approved').map(u => u.name), ...(S.roster || [])].filter(Boolean))].sort();
   const list = activeCalls();
   openModal(`<div class="row"><h2 style="margin:0">📣 Call to pit</h2><span class="sp"></span><button class="btn small" data-act="modal-close">✕</button></div>
     <div class="muted small" style="margin:4px 0 10px">Their phone (and the pit TV) will alarm until they tap “On my way”.${Store.mode === 'cloud' ? '' : ' <b class="warn">Team sync is off — calls only show on this device.</b>'}</div>
@@ -1426,6 +1470,160 @@ function applySetupCode(code) {
   } catch { toast('That setup link is broken', 'bad'); location.hash = 'matches'; }
 }
 
+/* ---------------- accounts: sign in / sign up / approval ---------------- */
+const ROLE_LBL = { admin: 'Admin', mentor: 'Mentor', drive: 'Drive team', pit: 'Pit crew', member: 'Member' };
+const Auth = { user: null, profile: null, admins: [], unsubSelf: null, pendingName: '' };
+const isAdmin = () => !!(Auth.user && Auth.admins.includes(Auth.user.uid));
+const teamDoc = p => Store.db.doc(`teams/${S.team}/${p}`);
+let gateMode = 'signup';
+function gate(state, extra) {
+  const g = $('#gate'); if (!g) return;
+  if (state === 'open') { g.hidden = true; g.innerHTML = ''; return; }
+  g.hidden = false;
+  const head = `<div class="gbrand"><img src="icon.svg" alt=""><div><b>1577</b> STEAMPUNK <em>PIT</em></div></div>`;
+  let body = '';
+  if (state === 'loading') body = '<div class="muted">Loading…</div>';
+  else if (state === 'nofirebase') body = '<h2>Sign-in isn\'t set up yet</h2><div class="muted">The team\'s Firebase project hasn\'t been connected to the app.</div>';
+  else if (state === 'signin') {
+    const up = gateMode === 'signup';
+    body = `<h2>${up ? 'Create your account' : 'Sign in'}</h2>
+      <button class="gbtn google" data-act="g-google"><span class="gicon">G</span> Continue with Google</button>
+      <div class="gor"><span>or with email</span></div>
+      ${up ? '<input type="text" id="gName" placeholder="Your name (e.g. Tom Moyal)" autocomplete="name">' : ''}
+      <input type="email" id="gEmail" placeholder="Email" autocomplete="email">
+      <input type="password" id="gPass" placeholder="Password${up ? ' (6+ characters)' : ''}" autocomplete="${up ? 'new-password' : 'current-password'}">
+      <button class="gbtn primary" data-act="g-email">${up ? 'Create account' : 'Sign in'}</button>
+      <div class="gerr" id="gErr">${esc(extra || '')}</div>
+      <div class="glinks">${up ? 'Already have an account? <a href="#" data-act="g-mode" data-m="signin">Sign in</a>'
+        : 'New to the team app? <a href="#" data-act="g-mode" data-m="signup">Create an account</a> · <a href="#" data-act="g-reset">Forgot password?</a>'}</div>`;
+  } else if (state === 'pending') {
+    body = `<h2>Hi ${esc(Auth.profile?.name || '')} 👋</h2>
+      <div class="gwait">Your account is waiting for a <b>1577 admin</b> to approve it. This page opens the app by itself as soon as you're approved.</div>
+      ${extra === 'noadmin' ? `<div class="gnote">This team has no admin yet. If you're setting the app up for 1577, make yourself the first admin:
+        <button class="gbtn primary" data-act="g-claim">Become the team's first admin</button></div>` : ''}
+      <div class="gerr" id="gErr"></div>
+      <button class="gbtn" data-act="g-out">Sign out</button>`;
+  } else if (state === 'declined') {
+    body = `<h2>Access not approved</h2><div class="muted">A 1577 admin declined this account. If that's a mistake, talk to a mentor.</div><button class="gbtn" data-act="g-out">Sign out</button>`;
+  }
+  g.innerHTML = `<div class="gbox">${head}${body}</div>`;
+}
+function gateErr(e) {
+  const map = { 'auth/invalid-credential': 'Wrong email or password.', 'auth/wrong-password': 'Wrong email or password.', 'auth/user-not-found': 'No account with that email — create one.',
+    'auth/email-already-in-use': 'That email already has an account — sign in instead.', 'auth/weak-password': 'Password must be at least 6 characters.',
+    'auth/invalid-email': 'That email address looks wrong.', 'auth/popup-closed-by-user': 'Google sign-in was closed.', 'auth/too-many-requests': 'Too many tries — wait a minute.',
+    'auth/unauthorized-domain': 'This web address isn\'t allowed for Google sign-in yet (Firebase → Authentication → Settings → Authorized domains).', 'permission-denied': 'Not allowed.' };
+  const el = $('#gErr'); const msg = map[e?.code] || e?.message || String(e);
+  if (el) el.textContent = msg; else toast(msg, 'bad');
+}
+async function onAuth(user) {
+  if (Auth.unsubSelf) { Auth.unsubSelf(); Auth.unsubSelf = null; }
+  Auth.user = user; Auth.profile = null;
+  if (!user) { if (started) { location.reload(); return; } gate('signin'); return; }
+  gate('loading');
+  // who are the admins? (the config doc may not exist yet on a brand-new team)
+  try { const c = await teamDoc('meta/config').get(); Auth.admins = c.exists ? (c.data().admins || []) : []; Auth.noAdmin = !c.exists; }
+  catch { Auth.admins = []; Auth.noAdmin = false; }
+  const ref = teamDoc('users/' + user.uid);
+  Auth.unsubSelf = ref.onSnapshot(async snap => {
+    if (!snap.exists) {
+      const name = Auth.pendingName || user.displayName || (user.email || 'member').split('@')[0];
+      try { await ref.set({ name, email: user.email || '', status: 'pending', role: 'member', t: Date.now() }); } catch (e) { gateErr(e); }
+      return;
+    }
+    const p = snap.data(); Auth.profile = p;
+    if (isAdmin() && (p.status !== 'approved' || p.role !== 'admin')) { ref.set({ status: 'approved', role: 'admin' }, { merge: true }).catch(() => { }); return; }
+    if (p.status === 'approved') {
+      if (S.member !== p.name) { S.member = p.name; saveSettings(); }
+      gate('open'); renderAccount(); startApp();
+    } else if (p.status === 'declined') gate('declined');
+    else gate('pending', Auth.noAdmin ? 'noadmin' : '');
+  }, e => gateErr(e));
+}
+function renderAccount() {
+  const b = $('#acctBtn'); if (!b || !Auth.profile) return;
+  const ini = Auth.profile.name.split(/\s+/).map(x => x[0]).join('').slice(0, 2).toUpperCase();
+  b.textContent = ini; b.hidden = false; b.title = Auth.profile.name;
+}
+function membersPanel() {
+  const us = Object.entries(SD.users || {}).map(([uid, u]) => ({ uid, ...u }));
+  const order = { pending: 0, approved: 1, declined: 2 };
+  us.sort((a, b) => (order[a.status] ?? 3) - (order[b.status] ?? 3) || String(a.name).localeCompare(b.name));
+  const pend = us.filter(u => u.status === 'pending').length;
+  return `<div class="card"><div class="row"><h3 style="margin:0">Team members</h3>${pend ? `<span class="pill hot">${pend} waiting</span>` : ''}<span class="sp"></span><span class="muted small">admins only</span></div>
+    <div class="mlist" style="margin-top:8px">${us.map(u => `<div class="urow ${u.status}">
+      <div><b>${esc(u.name)}</b>${u.uid === Auth.user?.uid ? ' <span class="muted small">(you)</span>' : ''}<div class="muted small">${esc(u.email || '')}</div></div><span class="sp"></span>
+      ${u.status === 'pending' ? `<button class="btn small primary" data-act="u-approve" data-uid="${esc(u.uid)}">Approve</button><button class="btn small danger" data-act="u-decline" data-uid="${esc(u.uid)}">Decline</button>`
+        : u.status === 'declined' ? `<span class="muted small">declined</span><button class="btn small" data-act="u-approve" data-uid="${esc(u.uid)}">Approve</button>`
+        : `<select data-act="u-role" data-uid="${esc(u.uid)}" ${u.uid === Auth.user?.uid ? 'disabled' : ''}>${Object.entries(ROLE_LBL).map(([k, l]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+           ${u.uid !== Auth.user?.uid ? `<button class="btn small" data-act="u-remove" data-uid="${esc(u.uid)}">Remove</button>` : ''}`}
+    </div>`).join('') || '<div class="muted">Nobody yet.</div>'}</div>
+    <div class="muted small" style="margin-top:8px">New sign-ups appear here. Admins can approve people and manage the team; other roles are labels for now.</div></div>`;
+}
+async function setAdmin(uid, on) {
+  const ref = teamDoc('meta/config');
+  await ref.update({ admins: on ? firebase.firestore.FieldValue.arrayUnion(uid) : firebase.firestore.FieldValue.arrayRemove(uid) });
+  Auth.admins = on ? [...new Set([...Auth.admins, uid])] : Auth.admins.filter(x => x !== uid);
+}
+Object.assign(A, {
+  'g-mode': el => { gateMode = el.dataset.m; gate('signin'); },
+  'g-google': async () => {
+    const p = new firebase.auth.GoogleAuthProvider();
+    try { await firebase.auth().signInWithPopup(p); }
+    catch (e) { if (/popup-blocked|operation-not-supported|web-storage/.test(e.code || '')) { try { await firebase.auth().signInWithRedirect(p); } catch (e2) { gateErr(e2); } } else gateErr(e); }
+  },
+  'g-email': async () => {
+    const email = $('#gEmail').value.trim(), pass = $('#gPass').value;
+    try {
+      if (gateMode === 'signup') {
+        const name = $('#gName').value.trim(); if (!name) { gateErr({ message: 'Type your name so the team knows who you are.' }); return; }
+        Auth.pendingName = name;
+        const cr = await firebase.auth().createUserWithEmailAndPassword(email, pass);
+        await cr.user.updateProfile({ displayName: name });
+      } else await firebase.auth().signInWithEmailAndPassword(email, pass);
+    } catch (e) { gateErr(e); }
+  },
+  'g-reset': async () => {
+    const email = $('#gEmail')?.value.trim(); if (!email) { gateErr({ message: 'Type your email above first, then tap “Forgot password?”.' }); return; }
+    try { await firebase.auth().sendPasswordResetEmail(email); const el = $('#gErr'); if (el) { el.className = 'gerr ok'; el.textContent = 'Reset email sent — check your inbox.'; } } catch (e) { gateErr(e); }
+  },
+  'g-out': () => firebase.auth().signOut(),
+  'g-claim': async () => {
+    const uid = Auth.user.uid;
+    try {
+      await teamDoc('meta/config').set({ admins: [uid], created: Date.now() });
+      Auth.admins = [uid]; Auth.noAdmin = false;
+      await teamDoc('users/' + uid).set({ status: 'approved', role: 'admin' }, { merge: true });
+    } catch (e) { gateErr({ message: 'Couldn\'t make you admin — the team may already have one. Ask them to approve you.' }); }
+  },
+  'acct': () => {
+    const p = Auth.profile || {};
+    openModal(`<div class="row"><h2 style="margin:0">My account</h2><span class="sp"></span><button class="btn small" data-act="modal-close">✕</button></div>
+      <div class="muted small" style="margin:6px 0">${esc(p.email || Auth.user?.email || '')} · ${esc(ROLE_LBL[p.role] || 'Member')}</div>
+      <label class="f">Name</label><input type="text" id="acctName" value="${esc(p.name || '')}">
+      <div class="row" style="margin-top:14px"><button class="btn danger" data-act="g-out">Sign out</button><span class="sp"></span><button class="btn primary" data-act="acct-save">Save</button></div>`);
+  },
+  'acct-save': async () => {
+    const n = $('#acctName').value.trim(); if (!n) return;
+    await teamDoc('users/' + Auth.user.uid).set({ name: n }, { merge: true });
+    S.member = n; saveSettings(); registerMember(); closeModal(); toast('Name updated', 'good');
+  },
+  'u-approve': async el => { await Store.put('users', el.dataset.uid, { status: 'approved', approvedBy: who(), approvedAt: Date.now() }); renderAll('nav'); },
+  'u-decline': async el => { await Store.put('users', el.dataset.uid, { status: 'declined' }); renderAll('nav'); },
+  'u-remove': async el => {
+    if (el.dataset.sure !== '1') { el.dataset.sure = '1'; el.textContent = 'Tap again'; return; }
+    await setAdmin(el.dataset.uid, false).catch(() => { });
+    await Store.put('users', el.dataset.uid, { status: 'declined', role: 'member' }); renderAll('nav');
+  }
+});
+document.addEventListener('change', async e => {
+  const el = e.target; if (el.dataset.act !== 'u-role') return;
+  const uid = el.dataset.uid, role = el.value;
+  try { await setAdmin(uid, role === 'admin'); await Store.put('users', uid, { role }); toast('Role updated', 'good'); }
+  catch (err) { toast('Could not change role: ' + err.message, 'bad'); }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.closest('#gate') && e.target.tagName === 'INPUT') A['g-email'](); });
+
 /* ---------------- refresh loop + ticker ---------------- */
 let busy = false, lastTBA = 0, lastSB = 0;
 async function refresh(force) {
@@ -1448,6 +1646,7 @@ function tick() {
   const d = new Date(now);
   $('#clock').innerHTML = `<span class="cdate">${esc(d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }))}</span><span class="ctime">${pad(d.getHours())}:${pad(d.getMinutes())}<span class="csec">:${pad(d.getSeconds())}</span></span>`;
   document.querySelectorAll('[data-cd]').forEach(el => { el.textContent = fmtCD(+el.dataset.cd - now); });
+  updateGauges();
   document.querySelectorAll('[data-el]').forEach(el => { el.textContent = fmtEl(now - +el.dataset.el); });
   if (++tickN % 15 === 0) renderAll(); // re-evaluate states (queue now, charged, etc.)
   checkAlerts();
@@ -1463,12 +1662,20 @@ window.addEventListener('offline', renderTop);
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } hadController = true; });
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => { r.update().catch(() => { }); setInterval(() => r.update().catch(() => { }), 30 * 60000); }).catch(() => { });
   }
+  gate('loading');
+  await Store.init();
+  if (Store.mode !== 'cloud') { gate('open'); startApp(); return; }
+  firebase.auth().onAuthStateChanged(onAuth);
+  firebase.auth().getRedirectResult().catch(e => gateErr(e));
+})();
+let started = false;
+async function startApp() {
+  if (started) return; started = true;
   route();
   ensureTopics();
-  await Store.init();
   subscribeShared();
   registerMember();
   await refresh(true);
   setInterval(refresh, 20000);
   setInterval(tick, 1000); tick();
-})();
+}

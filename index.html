@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>1577 Steampunk Pit</title>
-<meta name="theme-color" content="#14110f">
+<meta name="theme-color" content="#16120e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="1577 Pit">
@@ -13,25 +13,38 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- icon set: one consistent stroke style everywhere -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-matches" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4M7.5 14h3M7.5 17h6"/></symbol>
+    <symbol id="i-robot" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9l-3.8 3.8z"/></symbol>
+    <symbol id="i-standings" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM17 5h3v1.5A3.5 3.5 0 0 1 16.6 10M7 5H4v1.5A3.5 3.5 0 0 0 7.4 10"/></symbol>
+    <symbol id="i-pits" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.2a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.8" r="2.6"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M4.6 4.6l1.9 1.9M17.5 17.5l1.9 1.9M2.5 12h2.6M18.9 12h2.6M4.6 19.4l1.9-1.9M17.5 6.5l1.9-1.9"/><circle cx="12" cy="12" r="6.8"/></symbol>
+    <symbol id="i-full" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+    <symbol id="i-call" viewBox="0 0 24 24"><path d="M3 10.5v3a1 1 0 0 0 1 1h3l6 4.5v-14l-6 4.5H4a1 1 0 0 0-1 1zM16.5 9a3.5 3.5 0 0 1 0 6M19 6a7.5 7.5 0 0 1 0 12"/></symbol>
+  </defs>
+</svg>
 <div id="app">
   <header id="topbar">
-    <div class="brand"><img src="icon.svg" alt=""><span><b>1577</b> STEAMPUNK <em>PIT</em></span></div>
+    <a class="brand" href="#matches" aria-label="1577 Steampunk Pit, home"><img src="icon.svg" alt=""><span><b>1577</b> Steampunk <em>Pit</em></span></a>
     <div id="evname" class="evname"></div>
     <div class="topright">
-      <span id="soundChip" class="chip-btn" hidden data-act="sound-unlock">🔇 Tap for sound</span>
+      <button id="soundChip" class="chip-btn" hidden data-act="sound-unlock">Tap to enable sound</button>
       <span id="syncChip" class="sync"></span>
       <span id="clock" class="clock"></span>
-      <button id="fsBtn" class="icon-btn tv-only" data-act="fullscreen" title="Fullscreen">⛶</button>
-      <a class="icon-btn" href="#settings" title="Settings">⚙</a>
+      <button id="fsBtn" class="icon-btn tv-only" data-act="fullscreen" title="Fullscreen" aria-label="Fullscreen"><svg><use href="#i-full"/></svg></button>
+      <a class="icon-btn" href="#settings" title="Settings" aria-label="Settings"><svg><use href="#i-settings"/></svg></a>
+      <button id="acctBtn" class="acct" data-act="acct" hidden aria-label="My account"></button>
     </div>
   </header>
 
   <div id="stage">
-    <section id="streamBox">
+    <section id="streamBox" aria-label="Live stream">
       <div id="streamFrameWrap"><div class="stream-empty">Loading stream…</div></div>
       <div id="streamCtl"></div>
     </section>
@@ -40,20 +53,18 @@
     <section id="tvStrip"></section>
   </div>
 
-  <nav id="nav">
-    <a href="#matches" data-v="matches"><i>🗓</i>Matches</a>
-    <a href="#checklist" data-v="checklist"><i>✅</i>Checklist</a>
-    <a href="#batteries" data-v="batteries"><i>🔋</i>Batteries</a>
-    <a href="#debrief" data-v="debrief"><i>📝</i>Debrief</a>
-    <a href="#playoffs" data-v="playoffs" id="navPlayoffs" hidden><i>⚔️</i>Playoffs</a>
-    <a href="#rankings" data-v="rankings"><i>🏆</i>Rankings</a>
-    <a href="#pits" data-v="pits"><i>📍</i>Pits</a>
+  <nav id="nav" aria-label="Main">
+    <a href="#matches" data-g="matches"><svg><use href="#i-matches"/></svg><span>Matches</span></a>
+    <a href="#checklist" data-g="robot"><svg><use href="#i-robot"/></svg><span>Robot</span></a>
+    <a href="#rankings" data-g="standings" id="navStandings"><svg><use href="#i-standings"/></svg><span>Standings</span></a>
+    <a href="#pits" data-g="pits"><svg><use href="#i-pits"/></svg><span>Pits</span></a>
   </nav>
 
-  <button id="callFab" data-act="call-open" title="Call someone back to the pit">📣<span class="cfl">Call to pit</span><span class="cfn"></span></button>
-  <div id="alertBar" hidden></div>
-  <div id="toasts"></div>
+  <button id="callFab" data-act="call-open" title="Call someone back to the pit"><svg><use href="#i-call"/></svg><span class="cfl">Call to pit</span><span class="cfn"></span></button>
+  <div id="alertBar" hidden role="alert"></div>
+  <div id="toasts" aria-live="polite"></div>
   <div id="modal" hidden></div>
+  <div id="gate" hidden></div>
 </div>
 <script src="app.js"></script>
 </body>
