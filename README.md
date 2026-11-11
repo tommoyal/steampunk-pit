@@ -11,6 +11,7 @@ The competition pit app for FRC Team 1577. It runs as a full-screen dashboard on
 - **Battery tracker:** status (ready, charging, in robot, resting, retired), charge timer, voltage and resistance readings, and which matches each battery was used in.
 - **Post-match debrief:** what worked, what broke, driver notes and a star rating.
 - **Rankings:** our rank, record, ranking score, projected wins and the full table with EPA.
+- **Playoffs:** alliances, the full double-elimination bracket (M1–M13 and best-of-3 finals), our alliance's status (upper or lower bracket, eliminated, champions), where a win or a loss sends us, and elimination-match warnings on the next-match card. Try it with Settings → Demo phase → Playoffs.
 - **Alerts:** a banner and sound X minutes before queueing, at queue time, on Nexus "Now queuing" or "On deck", and when a result posts. Phone notifications work while the app is open.
 - **Call to pit:** the 📣 button in the corner calls one member (or everyone) back to the pit. Their phone and the TV alarm until they tap "On my way". Needs team sync, and each member's name in Settings → Your name and Team members.
 - **Phone alerts (ntfy):** alerts that reach locked phones through the free ntfy app. Each member subscribes to the Team channel, the Queue channel if they're drive team or pit crew, and their personal channel (Settings → Phone alerts). Only the pit TV should have "This device sends queue alerts" turned on.

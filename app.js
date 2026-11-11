@@ -32,11 +32,11 @@ const S = Object.assign({
   team: 1577, year: seasonYear(), eventKey: '', tbaKey: '', nexusKey: '', firebase: '',
   queueLead: 20, alertLead: 5, chargeMin: 45, sound: true, notify: false,
   streamUrl: '', streamIdx: 0, streamCollapsed: false, demo: true, tv: false, member: '',
-  checklist: DEFAULT_CHECKLIST, roster: [],
+  checklist: DEFAULT_CHECKLIST, roster: [], demoPhase: 'quals',
   ntfyOn: true, ntfySend: null, ntfyServer: 'https://ntfy.sh', ntfyTeam: '', ntfyQueue: '', ntfyMe: ''
 }, LS.get('pit.settings', {}));
 const saveSettings = () => LS.set('pit.settings', S);
-const SHARE_KEYS = ['team', 'year', 'eventKey', 'tbaKey', 'nexusKey', 'firebase', 'queueLead', 'alertLead', 'chargeMin', 'streamUrl', 'demo', 'checklist', 'roster', 'ntfyOn', 'ntfyServer', 'ntfyTeam', 'ntfyQueue'];
+const SHARE_KEYS = ['team', 'year', 'eventKey', 'tbaKey', 'nexusKey', 'firebase', 'queueLead', 'alertLead', 'chargeMin', 'streamUrl', 'demo', 'demoPhase', 'checklist', 'roster', 'ntfyOn', 'ntfyServer', 'ntfyTeam', 'ntfyQueue'];
 const evKey = () => S.demo ? 'demo' : String(S.eventKey || '').trim().toLowerCase();
 
 /* ---------------- formatting ---------------- */
@@ -47,11 +47,11 @@ function fmtCD(ms) {
   return h ? `${h}:${pad(m)}:${pad(x)}` : `${m}:${pad(x)}`;
 }
 function fmtEl(ms) { const m = Math.max(0, Math.floor(ms / 60000)); return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${pad(m % 60)}m`; }
-const shortLabel = l => String(l || '').replace('Qualification ', 'Q').replace('Qual ', 'Q').replace('Playoff ', 'P').replace('Final ', 'F').replace('Practice ', 'PR');
+const shortLabel = l => String(l || '').replace('Qualification ', 'Q').replace('Qual ', 'Q').replace('Playoff ', 'P').replace('Match ', 'M').replace('Final ', 'F').replace('Practice ', 'PR');
 const pct = p => `${Math.round(p * 100)}%`;
 
 /* ---------------- event data (cached per device for offline) ---------------- */
-const emptyData = () => ({ eventKey: evKey(), event: null, teams: {}, matches: [], rankings: null, nexus: null, sb: { matches: {}, teams: {} }, updated: {}, errors: {} });
+const emptyData = () => ({ eventKey: evKey(), event: null, teams: {}, matches: [], rankings: null, alliances: null, nexus: null, sb: { matches: {}, teams: {} }, updated: {}, errors: {} });
 let D = LS.get('pit.cache', null);
 if (!D || D.eventKey !== evKey()) D = emptyData();
 const saveCache = () => { if (!S.demo) LS.set('pit.cache', D); };
@@ -68,7 +68,7 @@ const nexusApi = ev => getJSON('https://frc.nexus/api/v1/event/' + ev, { 'Nexus-
 const LEVEL = { pm: 0, qm: 1, ef: 2, qf: 3, sf: 4, f: 5 };
 function matchLabel(l, s, n) {
   if (l === 'qm') return 'Qual ' + n;
-  if (l === 'sf') return 'Playoff ' + s + (n > 1 ? '-' + n : '');
+  if (l === 'sf') return 'Match ' + s + (n > 1 ? ' (replay ' + n + ')' : '');
   if (l === 'f') return 'Final ' + n;
   if (l === 'qf') return `QF ${s}-${n}`;
   if (l === 'ef') return `EF ${s}-${n}`;
@@ -95,6 +95,14 @@ function pickBreakdown(b) {
   return { auto: find(/^autoPoints$/i), teleop: find(/^teleopPoints$/i), endgame: find(/^end ?game.*points$/i),
     fouls: find(/^foulPoints$/i), rp: find(/^rp$/i) };
 }
+function normAlliances(arr) {
+  if (!Array.isArray(arr) || !arr.length) return null;
+  return arr.map((a, i) => ({
+    num: i + 1, name: a.name || `Alliance ${i + 1}`,
+    teams: [...(a.picks || []).map(k => +String(k).replace('frc', '')), ...(a.backup?.in ? [+String(a.backup.in).replace('frc', '')] : [])],
+    status: a.status || null
+  }));
+}
 function normRankings(r) {
   if (!r || !r.rankings) return null;
   const info = r.sort_order_info || [], extra = r.extra_stats_info || [];
@@ -112,13 +120,14 @@ async function refreshTBA() {
   if (!evKey()) { D.errors.tba = 'Pick your event in Settings.'; return; }
   try {
     const ev = evKey();
-    const [event, matches, teams, rankings] = await Promise.all([
-      tba(`/event/${ev}`), tba(`/event/${ev}/matches`), tba(`/event/${ev}/teams/simple`), tba(`/event/${ev}/rankings`).catch(() => null)
+    const [event, matches, teams, rankings, alliances] = await Promise.all([
+      tba(`/event/${ev}`), tba(`/event/${ev}/matches`), tba(`/event/${ev}/teams/simple`), tba(`/event/${ev}/rankings`).catch(() => null), tba(`/event/${ev}/alliances`).catch(() => null)
     ]);
     D.event = { key: event.key, name: event.short_name || event.name, fullName: event.name, start: event.start_date, end: event.end_date, webcasts: event.webcasts || [] };
     D.teams = Object.fromEntries((teams || []).map(t => [t.team_number, t.nickname]));
     D.matches = (matches || []).map(normTBA);
     D.rankings = normRankings(rankings);
+    D.alliances = normAlliances(alliances);
     D.updated.tba = Date.now(); delete D.errors.tba;
   } catch (e) { D.errors.tba = `The Blue Alliance: ${e.message}`; }
 }
@@ -155,8 +164,10 @@ function rng(seed) { return () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.i
 const DEMO_TEAMS = [1577, 1690, 2231, 1574, 3339, 4590, 5654, 1937, 2630, 3075, 4338, 1942, 5990, 6738, 7039, 4744, 3083, 2212, 5951, 8175, 6230, 1943, 3211, 4661];
 function demoData() {
   const t = Date.now();
+  const po = S.demoPhase === 'playoffs';
   let base = LS.get('pit.demoBase', 0);
   if (!base || t - base > 6 * 3600e3 || base > t) { base = t - 50 * 60000; LS.set('pit.demoBase', base); }
+  if (po) base = t - (54 * 7 + 90) * 60000; // all quals done
   const r = rng(1577), others = DEMO_TEAMS.filter(x => x !== 1577), gap = 7 * 60000;
   const matches = [], sbm = {};
   for (let i = 1; i <= 54; i++) {
@@ -183,18 +194,122 @@ function demoData() {
   }
   const rows = DEMO_TEAMS.map(n => { const s = st[n]; return { team: n, w: s.w, l: s.l, t: s.t, rs: s.p ? s.rp / s.p : 0, played: s.p, extra: s.rp }; })
     .sort((x, y) => y.rs - x.rs || y.extra - x.extra).map((x, i) => ({ ...x, rank: i + 1 }));
+  const epaT = n => Math.round(20 + rng(n)() * 50);
+  let alliances = null;
+  if (po) {
+    // alliance selection: top 8 are captains, serpentine draft (1→8, then 8→1)
+    const avail = rows.map(r => r.team), caps = avail.splice(0, 8), al = caps.map(c => [c]);
+    for (let i = 0; i < 8; i++) al[i].push(avail.shift());
+    for (let i = 7; i >= 0; i--) al[i].push(avail.shift());
+    if (!al.some(a => a.includes(1577))) al[3][1] = 1577;
+    alliances = al.map((teams, i) => ({ num: i + 1, name: `Alliance ${i + 1}`, teams, status: null }));
+    let pb = LS.get('pit.demoPBase', 0);
+    if (!pb || t - pb > 3 * 3600e3 || pb > t) { pb = t - 38 * 60000; LS.set('pit.demoPBase', pb); }
+    const aEPA = a => alliances[a - 1].teams.slice(0, 3).reduce((x, n) => x + epaT(n), 0);
+    const W = {}, L = {};
+    const res = f => f[0] === 'A' ? +f.slice(1) : f[0] === 'W' ? W[f.slice(1)] : L[f.slice(1)];
+    const order = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+    let push = (key, level, set, num, ra, ba, start) => {
+      const rr = rng(1577 * 31 + set * 7 + num), pr = 1 / (1 + Math.exp((aEPA(ba) - aEPA(ra)) / 25));
+      const played = start + 3 * 60000 < t, redWins = rr() < pr, hi = 110 + Math.floor(rr() * 40), lo = 70 + Math.floor(rr() * 35);
+      const rs = played ? (redWins ? hi : lo) : -1, bs = played ? (redWins ? lo : hi) : -1;
+      matches.push({ key, level, num, set, label: matchLabel(level, set, num), red: alliances[ra - 1].teams.slice(0, 3), blue: alliances[ba - 1].teams.slice(0, 3),
+        rs, bs, winner: played ? (redWins ? 'red' : 'blue') : '', played, sched: start, pred: start, actual: played ? start : null, order: (LEVEL[level]) * 10000 + set * 100 + num });
+      sbm[key] = { redWin: pr, redScore: Math.round(95 + pr * 30), blueScore: Math.round(95 + (1 - pr) * 30) };
+      return played ? (redWins ? [ra, ba] : [ba, ra]) : null;
+    };
+    for (const n of order) {
+      const [fr, fb] = BRACKET[n].feeds, ra = res(fr), ba = res(fb);
+      if (!ra || !ba) continue;
+      const out = push(`demo_sf${n}m1`, 'sf', n, 1, ra, ba, pb + (n - 1) * 9 * 60000);
+      if (out) { W[n] = out[0]; L[n] = out[1]; }
+    }
+    if (W[11] && W[13]) {
+      const wins = {};
+      for (let g = 1; g <= 3; g++) {
+        const out = push(`demo_f1m${g}`, 'f', 1, g, W[11], W[13], pb + (13 + g - 1) * 9 * 60000);
+        if (!out) break; wins[out[0]] = (wins[out[0]] || 0) + 1; if (wins[out[0]] >= 2) break;
+      }
+    }
+  }
   const nx = matches.map(m => {
     const d = m.pred - t; let status = null;
     if (!m.played) status = d < 0 ? 'On field' : d < 7 * 60000 ? 'On deck' : d < 18 * 60000 ? 'Now queuing' : d < 30 * 60000 ? 'Queuing soon' : null;
-    return { label: m.label.replace('Qual', 'Qualification'), status, red: m.red, blue: m.blue, t: { estimatedQueueTime: m.pred - 20 * 60000, estimatedStartTime: m.pred } };
+    return { label: m.level === 'qm' ? m.label.replace('Qual', 'Qualification') : m.level === 'sf' ? 'Playoff ' + m.set : 'Final ' + m.num, status, red: m.red, blue: m.blue, t: { estimatedQueueTime: m.pred - 20 * 60000, estimatedStartTime: m.pred } };
   });
   return {
     eventKey: 'demo', event: { key: 'demo', name: 'DEMO Steampunk Test Event', webcasts: [{ type: 'twitch', channel: 'firstinspires' }] },
-    teams: { 1577: 'Steampunk' }, matches, rankings: { rsName: 'Ranking Score', rsPrec: 2, extraName: 'Total RP', rows },
-    nexus: { matches: nx }, sb: { matches: sbm, teams: Object.fromEntries(DEMO_TEAMS.map(n => [n, { epa: Math.round(20 + rng(n)() * 50) }])) },
+    teams: { 1577: 'Steampunk' }, matches, alliances, rankings: { rsName: 'Ranking Score', rsPrec: 2, extraName: 'Total RP', rows },
+    nexus: { matches: nx }, sb: { matches: sbm, teams: Object.fromEntries(DEMO_TEAMS.map(n => [n, { epa: epaT(n) }])) },
     updated: { tba: t, nexus: t, sb: t }, errors: {}
   };
 }
+
+/* ---------------- playoffs: 8-alliance double elimination ---------------- */
+const BRACKET = {
+  1: { feeds: ['A1', 'A8'], round: 'Upper R1' }, 2: { feeds: ['A4', 'A5'], round: 'Upper R1' },
+  3: { feeds: ['A2', 'A7'], round: 'Upper R1' }, 4: { feeds: ['A3', 'A6'], round: 'Upper R1' },
+  5: { feeds: ['L1', 'L2'], round: 'Lower R2' }, 6: { feeds: ['L3', 'L4'], round: 'Lower R2' },
+  7: { feeds: ['W1', 'W2'], round: 'Upper R2' }, 8: { feeds: ['W3', 'W4'], round: 'Upper R2' },
+  9: { feeds: ['L7', 'W6'], round: 'Lower R3' }, 10: { feeds: ['L8', 'W5'], round: 'Lower R3' },
+  11: { feeds: ['W7', 'W8'], round: 'Upper final' }, 12: { feeds: ['W10', 'W9'], round: 'Lower R4' },
+  13: { feeds: ['L11', 'W12'], round: 'Lower final' }, F: { feeds: ['W11', 'W13'], round: 'Finals' }
+};
+const LOWER = [5, 6, 9, 10, 12, 13];
+function buildPlayoffs(Mo) {
+  const A = D.alliances; if (!A || !A.length) return null;
+  const T = Mo.T, allyOf = new Map();
+  A.forEach(a => a.teams.forEach(t => allyOf.set(t, a.num)));
+  const aNum = list => { for (const t of list || []) if (allyOf.has(t)) return allyOf.get(t); return null; };
+  const our = A.find(a => a.teams.includes(T)) || null;
+  const E = {}, W = {}, L = {};
+  const resolve = f => f[0] === 'A' ? +f.slice(1) : (f[0] === 'W' ? W : L)[f.slice(1)] || null;
+  for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
+    const ms = Mo.all.filter(m => m.level === 'sf' && m.set === n).sort((a, b) => a.num - b.num);
+    const dec = [...ms].reverse().find(m => m.played && (m.winner === 'red' || m.winner === 'blue'));
+    const cur = ms.find(m => !m.played) || dec || ms[ms.length - 1] || null;
+    const ref = dec || cur;
+    const ra = ref ? aNum(ref.red) : resolve(BRACKET[n].feeds[0]), ba = ref ? aNum(ref.blue) : resolve(BRACKET[n].feeds[1]);
+    const e = { n, ...BRACKET[n], m: cur, dec, ra, ba, elim: LOWER.includes(n) };
+    if (dec) { const rw = dec.winner === 'red'; e.winA = rw ? aNum(dec.red) : aNum(dec.blue); e.loseA = rw ? aNum(dec.blue) : aNum(dec.red); e.rs = dec.rs; e.bs = dec.bs; W[n] = e.winA; L[n] = e.loseA; }
+    E[n] = e;
+  }
+  const fms = Mo.all.filter(m => m.level === 'f').sort((a, b) => a.num - b.num);
+  const F = { n: 'F', ...BRACKET.F, games: fms, ra: fms[0] ? aNum(fms[0].red) : resolve('W11'), ba: fms[0] ? aNum(fms[0].blue) : resolve('W13'), wins: {} };
+  fms.forEach(m => { if (m.played && (m.winner === 'red' || m.winner === 'blue')) { const a = aNum(m.winner === 'red' ? m.red : m.blue); F.wins[a] = (F.wins[a] || 0) + 1; } });
+  F.champ = Object.keys(F.wins).find(a => F.wins[a] >= 2); F.champ = F.champ ? +F.champ : null;
+  F.m = fms.find(m => !m.played) || null;
+  F.elim = Object.values(F.wins).some(w => w >= 1);
+  E.F = F;
+  // our status
+  let st = null;
+  if (our) {
+    const n = our.num, sfLoss = Object.values(E).filter(e => e.n !== 'F' && e.loseA === n).length;
+    const inF = F.ra === n || F.ba === n, fLoss = inF ? Object.entries(F.wins).filter(([a]) => +a !== n).reduce((x, [, w]) => x + w, 0) : 0;
+    const fWin = F.wins[n] || 0;
+    let state, text;
+    if (F.champ === n) { state = 'won'; text = '🏆 EVENT CHAMPIONS'; }
+    else if (F.champ && inF) { state = 'out'; text = 'Event finalists'; }
+    else if (sfLoss >= 2) { state = 'out'; text = 'Eliminated'; }
+    else if (inF) { state = 'finals'; text = `Finals · series ${fWin}-${fLoss}`; }
+    else if (sfLoss === 1) { state = 'lower'; text = 'Lower bracket · next loss is out'; }
+    else { state = 'upper'; text = 'Upper bracket · undefeated'; }
+    if (our.status?.status === 'eliminated' && state !== 'out') { state = 'out'; text = 'Eliminated'; }
+    // next bracket match that includes us (even if TBA hasn't created it yet)
+    let nextE = null;
+    if (state !== 'out' && state !== 'won') {
+      for (const k of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) { const e = E[k]; if (!e.dec && (e.ra === n || e.ba === n)) { nextE = e; break; } }
+      if (!nextE && inF) nextE = F;
+    }
+    const goes = (k, pre) => { const hit = Object.values(E).find(e => e.feeds.includes(pre + k)); return hit ? hit : null; };
+    const path = nextE && nextE.n !== 'F' ? { win: goes(nextE.n, 'W'), lose: goes(nextE.n, 'L') } : null;
+    st = { state, text, nextE, path, record: `${Object.values(E).filter(e => e.n !== 'F' && e.winA === n).length + fWin}-${sfLoss + fLoss}` };
+  }
+  const started = Object.values(E).some(e => e.m || e.dec) || fms.length > 0;
+  return { A, our, E, allyOf, aNum, st, started };
+}
+const eName = e => e ? (e.n === 'F' ? 'Finals' : `M${e.n}`) : '';
+const sideLbl = (e, i) => { const a = i ? e.ba : e.ra; return a ? `A${a}` : e.feeds[i]; };
 
 /* ---------------- model: our matches, next match, timing ---------------- */
 const teamsKey = (r, b) => { const a = [...r, ...b].filter(Boolean); return a.length === 6 ? a.slice().sort((x, y) => x - y).join(',') : ''; };
@@ -247,7 +362,9 @@ function buildModel() {
   const myRank = D.rankings?.rows.find(r => r.team === T) || null;
   const remainingQ = ours.filter(m => !m.played && m.level === 'qm');
   const expWins = remainingQ.length && remainingQ.every(m => m.winProb != null) ? remainingQ.reduce((s, m) => s + m.winProb, 0) : null;
-  return { all, ours, next, last, delay, T, myRank, remainingQ, expWins };
+  const Mo = { all, ours, next, last, delay, T, myRank, remainingQ, expWins };
+  Mo.P = buildPlayoffs(Mo);
+  return Mo;
 }
 
 /* ---------------- shared team data (Firestore or this device) ---------------- */
@@ -396,6 +513,16 @@ function queueState(m) {
   }
   return `<div class="qstate"><span class="ql">Match time not posted yet</span></div>`;
 }
+function playoffLine(m, M) {
+  if (!M.P || (m.level !== 'sf' && m.level !== 'f')) return '';
+  const P = M.P, ra = P.aNum(m.red), ba = P.aNum(m.blue), us = m.color === 'red' ? ra : ba, them = m.color === 'red' ? ba : ra;
+  const e = m.level === 'f' ? P.E.F : P.E[m.set];
+  let warn = '';
+  if (m.level === 'f') { const ow = P.E.F.wins[them] || 0, uw = P.E.F.wins[us] || 0; warn = ow === 1 ? '⚠ ELIMINATION — lose and the event is over' : uw === 1 ? '🏆 Win this and we are CHAMPIONS' : 'Finals game ' + m.num; }
+  else if (e?.elim) warn = '⚠ ELIMINATION MATCH — lose and we are out';
+  else warn = 'Upper bracket — a loss drops us to the lower bracket';
+  return `<div class="poline ${/ELIM/.test(warn) ? 'hot' : ''}"><b>Alliance ${us || '?'}</b> vs Alliance ${them || '?'} · ${esc(e?.round || '')}<br>${esc(warn)}</div>`;
+}
 function nextCard(M) {
   const m = M.next;
   if (!m) {
@@ -411,6 +538,7 @@ function nextCard(M) {
     ${queueState(m)}
     <div class="nc-times">Match ~${hm(m.start)} (in <span data-cd="${m.start}">${fmtCD(m.start - Date.now())}</span>)${m.queue ? ` · queue ~${hm(m.queue)}` : ''}
       ${m.nx ? ' <span class="src">NEXUS</span>' : m.pred ? ' <span class="src">TBA EST.</span>' : ''}</div>
+    ${playoffLine(m, M)}
     <div class="alrow ${m.color}"><span class="alt">With</span>${m.allies.map(n => teamTag(n, M.T)).join('')}</div>
     <div class="alrow ${opp}"><span class="alt">Against</span>${m.opps.map(n => teamTag(n, M.T)).join('')}</div>
     <div class="nc-foot">
@@ -545,6 +673,46 @@ function viewRankings(M) {
         ${R.extraName ? `<td>${r.extra ?? ''}</td>` : ''}<td>${D.sb.teams[r.team]?.epa != null ? Number(D.sb.teams[r.team].epa).toFixed(1) : '—'}</td></tr>`).join('')}
     </tbody></table><div class="muted small" style="padding:6px">Green edge = next-match partner, red edge = next-match opponent. EPA from Statbotics.</div></div>` : ''}`;
 }
+function bracketBox(e, P) {
+  const our = P.our?.num, isF = e.n === 'F';
+  const side = i => {
+    const a = i ? e.ba : e.ra, lbl = sideLbl(e, i), won = isF ? (P.E.F.champ && a === P.E.F.champ) : (e.winA && a === e.winA), lost = !isF && e.loseA && a === e.loseA;
+    const score = isF ? (a ? (e.wins[a] || 0) : '') : (e.dec ? (i ? e.bs : e.rs) : '');
+    return `<div class="bs ${i ? 'blue' : 'red'} ${a && a === our ? 'us' : ''} ${won ? 'won' : ''} ${lost ? 'lost' : ''}"><b>${esc(lbl)}</b>
+      <span class="bt">${a ? P.A[a - 1].teams.slice(0, 3).join(' ') : '—'}</span><span class="bsc">${score}</span></div>`;
+  };
+  const m = e.m;
+  const when = e.dec && !isF ? 'done' : m ? (m.nx?.status && /queu|deck|field/i.test(m.nx.status) ? m.nx.status : hm(m.start)) : '';
+  return `<div class="bm ${e.ra === our || e.ba === our ? 'ours' : ''} ${P.st?.nextE === e ? 'nextup' : ''}" ${m ? `data-act="match" data-k="${esc(m.key)}"` : ''}>
+    <div class="bh2"><span>${eName(e)}</span>${e.elim && !isF ? '<span class="elimtag">ELIM</span>' : ''}<span class="sp"></span><span class="muted">${esc(when)}</span></div>${side(0)}${side(1)}</div>`;
+}
+function playoffStatusHTML(P, tv) {
+  const st = P.st;
+  if (!P.our) return `<div class="tvsub">We're not on an alliance${P.started ? '' : ' (yet)'}.</div>`;
+  const a = P.our, cls = { won: 'ok', out: 'bad', lower: 'warn', finals: 'ok', upper: '' }[st.state] || '';
+  const nx = st.nextE;
+  const opp = nx ? (nx.ra === a.num ? sideLbl(nx, 1) : sideLbl(nx, 0)) : null;
+  return `<div class="${tv ? 'tvbig' : 'pobig'}">Alliance ${a.num}</div>
+    <div class="tvsub">${a.teams.map(t => t === P.our.teams[0] ? `<b>${t}</b>` : t).join(' · ')} · record ${st.record}</div>
+    <div class="postate ${cls}">${esc(st.text)}</div>
+    ${nx ? `<div class="tvsub">Next: <b>${eName(nx)}</b> vs ${esc(opp)}${nx.m ? ' · ~' + hm(nx.m.start) : ''}</div>` : ''}
+    ${st.path ? `<div class="tvsub">Win → ${st.path.win ? eName(st.path.win) : '—'} · Lose → ${st.path.lose ? eName(st.path.lose) : '<b class="bad">OUT</b>'}</div>` : ''}`;
+}
+function viewPlayoffs(M) {
+  const P = M.P;
+  if (!P) return `${notices(M)}<div class="card"><h2>Playoffs</h2><div class="muted">Alliances appear here after alliance selection.</div></div>`;
+  const col = (title, ns) => `<div class="bcol"><div class="bct">${title}</div>${ns.map(n => bracketBox(P.E[n], P)).join('')}</div>`;
+  const epa = a => { const v = a.teams.slice(0, 3).map(t => D.sb.teams[t]?.epa); return v.every(x => x != null) ? v.reduce((x, y) => x + y, 0).toFixed(0) : '—'; };
+  const alive = a => { const sfL = Object.values(P.E).filter(e => e.n !== 'F' && e.loseA === a.num).length; return !(sfL >= 2 || (P.E.F.champ && P.E.F.champ !== a.num)); };
+  return `${notices(M)}<div class="card"><h2>Playoffs</h2>${playoffStatusHTML(P, false)}</div>
+    <div class="card"><h3>Upper bracket</h3><div class="bracket">${col('Round 1', [1, 2, 3, 4])}${col('Round 2', [7, 8])}${col('Upper final', [11])}${col('Finals (best of 3)', ['F'])}</div>
+      <h3 style="margin-top:14px">Lower bracket</h3><div class="bracket">${col('Round 2', [5, 6])}${col('Round 3', [9, 10])}${col('Round 4', [12])}${col('Lower final', [13])}</div>
+      <div class="muted small" style="margin-top:6px">Tap a match for details. Two losses = eliminated. Finals are best of 3.</div></div>
+    <div class="card"><h3>Alliances</h3><table class="rank"><thead><tr><th>#</th><th>Captain</th><th>Picks</th><th>EPA</th><th></th></tr></thead><tbody>
+      ${P.A.map(a => `<tr class="${a === P.our ? 'us' : ''}"><td class="n">${a.num}</td><td><b class="n">${a.teams[0]}</b> <span class="muted small">${esc(D.teams[a.teams[0]] || '')}</span></td>
+        <td>${a.teams.slice(1).join(', ')}</td><td>${epa(a)}</td><td>${P.E.F.champ === a.num ? '🏆' : alive(a) ? '' : '<span class="muted small">out</span>'}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
 function viewSettings() {
   const f = (k, label, type = 'text', extra = '') => `<label class="f">${label}</label><input type="${type}" data-s="${k}" value="${esc(S[k])}" ${extra}>`;
   const cb = (k, label) => `<label class="row" style="margin:8px 0"><input type="checkbox" data-s="${k}" ${S[k] ? 'checked' : ''}> ${label}</label>`;
@@ -559,6 +727,7 @@ function viewSettings() {
     <div class="muted small" style="margin-top:6px">Alerts fire while the app is open (on a phone, keep it open or added to the home screen).</div></div>
   <div class="card"><h3>Event</h3>
     ${cb('demo', '<b>Demo mode</b> (fake live event for testing)')}
+    <label class="f">Demo phase</label><select data-s="demoPhase"><option value="quals" ${S.demoPhase !== 'playoffs' ? 'selected' : ''}>Qualifications</option><option value="playoffs" ${S.demoPhase === 'playoffs' ? 'selected' : ''}>Alliance selection & playoffs</option></select>
     <div class="row"><div style="flex:1">${f('team', 'Team number', 'number')}</div><div style="flex:1">${f('year', 'Season', 'number')}</div></div>
     ${f('eventKey', 'Event key (e.g. 2027isde1)', 'text', 'placeholder="2027isde1"')}
     <div class="row" style="margin-top:8px"><button class="btn small" data-act="find-events">Find our events</button><span id="evFind" class="muted small"></span></div>
@@ -611,7 +780,8 @@ function matchDetail(key) {
   const allianceBox = side => {
     const list = side === 'red' ? m.red : m.blue, score = side === 'red' ? m.rs : m.bs, pred = side === 'red' ? sbm.redScore : sbm.blueScore;
     const won = m.played && ((m.winner === side) || (!m.winner && m.rs !== m.bs && (side === 'red' ? m.rs > m.bs : m.bs > m.rs)));
-    return `<div class="mdal ${side}"><div class="row"><b class="mdside">${side.toUpperCase()}${m.color === side ? ' · US' : ''}</b><span class="sp"></span>
+    const an = M.P && (m.level === 'sf' || m.level === 'f') ? M.P.aNum(list) : null;
+    return `<div class="mdal ${side}"><div class="row"><b class="mdside">${side.toUpperCase()}${an ? ' · A' + an : ''}${m.color === side ? ' · US' : ''}</b><span class="sp"></span>
       ${m.played && score >= 0 ? `<span class="mdscore ${won ? 'won' : ''}">${score}</span>` : pred != null ? `<span class="muted small">pred. ${Math.round(pred)}</span>` : ''}</div>
       <table class="rank"><thead><tr><th>Team</th><th></th><th>Rank</th><th>W-L-T</th><th>EPA</th></tr></thead><tbody>${list.map(n => teamRow(n, side)).join('')}</tbody></table>
       ${sumEPA(list) ? `<div class="muted small">Alliance EPA ${sumEPA(list)}</div>` : ''}</div>`;
@@ -657,7 +827,8 @@ function renderTV(M) {
   const now = Date.now(), l = M.last;
   const errs = Object.entries(D.errors || {}).filter(([k]) => k !== 'sb').map(([, e]) => e);
   $('#tvStrip').innerHTML = `
-    <div class="card tvbtn" data-act="go" data-v="rankings" title="Open rankings">${rankCardHTML(M, true)}</div>
+    ${M.P ? `<div class="card tvbtn" data-act="go" data-v="playoffs" title="Open playoffs"><h3>Playoffs</h3>${playoffStatusHTML(M.P, true)}</div>`
+      : `<div class="card tvbtn" data-act="go" data-v="rankings" title="Open rankings">${rankCardHTML(M, true)}</div>`}
     <div class="card tvbtn" data-act="go" data-v="checklist" title="Open checklist"><h3>Robot ${M.next ? '· ' + esc(shortLabel(M.next.label)) : ''}</h3>
       ${ck ? (ck.done ? '<div class="tvbig ok">READY ✓</div>' : `<div class="tvbig ${ck.n ? 'warn' : ''}">${ck.n}/${ck.total}</div><div class="tvsub">checklist done</div>`) : '<div class="tvsub">No upcoming match</div>'}
       ${ck && ck.battery && SD.batteries[ck.battery] ? `<div class="tvsub">Battery ${esc(SD.batteries[ck.battery].name)}</div>` : ck ? '<div class="tvsub warn">No battery picked</div>' : ''}</div>
@@ -677,16 +848,18 @@ function renderTop() {
   $('#soundChip').hidden = !(S.sound && (!actx || actx.state !== 'running'));
 }
 let current = 'matches', M = null;
-const VIEWS = { matches: viewMatches, checklist: viewChecklist, batteries: viewBatteries, debrief: viewDebrief, rankings: viewRankings, settings: viewSettings };
+const VIEWS = { playoffs: viewPlayoffs, matches: viewMatches, checklist: viewChecklist, batteries: viewBatteries, debrief: viewDebrief, rankings: viewRankings, settings: viewSettings };
 function renderAll(force) {
   M = buildModel();
   renderTop(); renderStream();
   if (document.body.classList.contains('tv')) renderTV(M);
   else if (current !== 'settings' || force === 'nav') $('#view').innerHTML = (S.tv && current !== 'matches' ? '<a class="btn primary backtv" href="#matches">← Back to TV</a>' : '') + (VIEWS[current] || viewMatches)(M);
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === current));
+  const np = $('#navPlayoffs'); if (np) np.hidden = !M.P;
 }
 function applyMode() {
   document.body.classList.toggle('tv', !!S.tv && current === 'matches');
+  document.body.classList.toggle('wideview', current === 'playoffs');
   keepAwake(); requestAnimationFrame(setTopH);
 }
 function setTopH() { document.documentElement.style.setProperty('--topH', $('#topbar').offsetHeight + 'px'); }
@@ -1059,7 +1232,7 @@ document.addEventListener('change', async e => {
 
 /* ---------------- settings form ---------------- */
 function readSettingsForm(apply) {
-  const before = JSON.stringify([evKey(), S.team, S.tbaKey, S.nexusKey]), fbBefore = S.firebase;
+  const before = JSON.stringify([evKey(), S.team, S.tbaKey, S.nexusKey, S.demoPhase]), fbBefore = S.firebase;
   document.querySelectorAll('[data-s]').forEach(el => {
     const k = el.dataset.s;
     if (el.type === 'checkbox') S[k] = el.checked;
@@ -1071,7 +1244,7 @@ function readSettingsForm(apply) {
   if (!apply) return;
   ensureTopics(); saveSettings(); registerMember();
   if (S.firebase !== fbBefore) { location.hash = 'matches'; location.reload(); return; }
-  if (JSON.stringify([evKey(), S.team, S.tbaKey, S.nexusKey]) !== before) {
+  if (JSON.stringify([evKey(), S.team, S.tbaKey, S.nexusKey, S.demoPhase]) !== before) {
     D = emptyData(); curSrc = null; prevPlayed = null; subscribeShared(); refresh(true);
   }
   toast('Saved', 'good');

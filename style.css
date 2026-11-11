@@ -272,3 +272,28 @@ body.tv #callFab{bottom:16px;left:auto;right:16px;font-size:22px;padding:12px 18
 .callrow{padding:8px 0;border-bottom:1px solid var(--line)}
 body.tv #toasts{right:auto;left:16px}
 @media (max-width:640px){ #alertBar{flex-wrap:wrap} #alertBar .ackbtn{flex:1;margin-left:0!important} }
+
+/* playoffs */
+.bracket{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:center;overflow-x:auto}
+@media (max-width:700px){ .bracket{grid-template-columns:repeat(4,minmax(180px,1fr))} }
+.bcol{display:flex;flex-direction:column;gap:8px;justify-content:space-around;height:100%}
+.bct{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.bm{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px;cursor:default}
+.bm[data-act]{cursor:pointer} .bm[data-act]:hover{border-color:var(--brass)}
+.bm.ours{border-color:var(--brass)} .bm.nextup{box-shadow:0 0 0 2px var(--brass2)}
+.bh2{display:flex;gap:6px;font-size:11px;margin-bottom:4px} .bh2 span:first-child{font-family:var(--num);font-weight:700;font-size:14px}
+.bs{display:grid;grid-template-columns:34px 1fr auto;gap:6px;align-items:center;padding:2px 6px;border-radius:6px;font-size:12px}
+.bs.red{border-left:3px solid var(--red)} .bs.blue{border-left:3px solid var(--blue)}
+.bs b{font-family:var(--num);font-size:15px} .bs .bt{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bs .bsc{font-family:var(--num);font-weight:700;font-size:15px}
+.bs.us{background:rgba(212,162,76,.18)} .bs.us b{color:var(--brass2)}
+.bs.won .bsc,.bs.won b{color:var(--green)} .bs.lost{opacity:.5}
+.pobig{font-family:var(--num);font-size:34px;font-weight:700;color:var(--brass2);line-height:1}
+.postate{font-family:var(--num);font-size:22px;font-weight:700;margin:4px 0}
+body.tv .postate{font-size:24px}
+.poline{background:var(--panel2);border-radius:8px;padding:6px 10px;font-size:13px;margin:6px 0}
+.poline.hot{background:var(--red);color:#fff;animation:pulse 1s infinite alternate}
+body.tv .poline{font-size:16px}
+
+.elimtag{font-size:9px;font-weight:700;background:var(--red);color:#fff;border-radius:4px;padding:1px 4px;align-self:center}
+@media (min-width:960px){ body.wideview:not(.tv) #stage{grid-template-columns:minmax(0,.75fr) minmax(0,1.6fr)} }
