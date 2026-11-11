@@ -32,10 +32,10 @@ const S = Object.assign({
   team: 1577, year: seasonYear(), eventKey: '', tbaKey: '', nexusKey: '', firebase: '',
   queueLead: 20, alertLead: 5, chargeMin: 45, sound: true, notify: false,
   streamUrl: '', streamIdx: 0, streamCollapsed: false, demo: true, tv: false, member: '',
-  checklist: DEFAULT_CHECKLIST
+  checklist: DEFAULT_CHECKLIST, roster: []
 }, LS.get('pit.settings', {}));
 const saveSettings = () => LS.set('pit.settings', S);
-const SHARE_KEYS = ['team', 'year', 'eventKey', 'tbaKey', 'nexusKey', 'firebase', 'queueLead', 'alertLead', 'chargeMin', 'streamUrl', 'demo', 'checklist'];
+const SHARE_KEYS = ['team', 'year', 'eventKey', 'tbaKey', 'nexusKey', 'firebase', 'queueLead', 'alertLead', 'chargeMin', 'streamUrl', 'demo', 'checklist', 'roster'];
 const evKey = () => S.demo ? 'demo' : String(S.eventKey || '').trim().toLowerCase();
 
 /* ---------------- formatting ---------------- */
@@ -297,12 +297,13 @@ const Store = {
 window.addEventListener('storage', e => {
   if (e.key && e.key.startsWith('pit.store.')) (Store.localSubs[e.key.slice(10)] || []).forEach(f => f());
 });
-const SD = { batteries: {}, check: {}, debrief: {} };
+const SD = { batteries: {}, check: {}, debrief: {}, calls: {} };
 let unsubs = [];
 function subscribeShared() {
   unsubs.forEach(u => { try { u && u(); } catch { } }); unsubs = [];
   const ev = evKey() || 'none';
   unsubs.push(Store.watch('batteries', o => { SD.batteries = o; renderAll(); }));
+  unsubs.push(Store.watch('calls', o => { SD.calls = o; onCalls(); }));
   unsubs.push(Store.watch('check_' + ev, o => { SD.check = o; renderAll(); }));
   unsubs.push(Store.watch('debrief_' + ev, o => { SD.debrief = o; renderAll(); }));
 }
@@ -576,6 +577,8 @@ function viewSettings() {
   <div class="card"><h3>Team sync</h3>
     <div class="muted small">Status: <b class="${Store.mode === 'cloud' ? 'ok' : 'warn'}">${Store.mode === 'cloud' ? 'Connected — checklist, batteries and debriefs are shared' : 'This device only'}</b>${Store.err ? ` · <span class="bad">${esc(Store.err)}</span>` : ''}</div>
     <label class="f">Firebase config (paste the firebaseConfig block)</label><textarea data-s="firebase" placeholder="const firebaseConfig = { apiKey: '…', projectId: '…', … };">${esc(S.firebase)}</textarea></div>
+  <div class="card"><h3>Team members</h3><div class="muted small">One name per line — used by “Call to pit”. Each member should put the same name in “Your name” above.</div>
+    <textarea data-s="roster" style="min-height:120px" placeholder="Tom\nNoa\nDaniel">${esc((S.roster || []).join('\n'))}</textarea></div>
   <div class="card"><h3>Checklist items</h3><div class="muted small">One per line.</div>
     <textarea data-s="checklist" style="min-height:170px">${esc(S.checklist.join('\n'))}</textarea></div>
   <div class="card"><h3>Set up other phones</h3><div class="muted small">Copies a link with this device's event, keys and sync settings. Send it to team members — opening it sets their app up.</div>
@@ -707,10 +710,10 @@ function beep(urgent) {
   }
 }
 let alertTimer = null;
-function alertUser(title, sub, urgent, tag) {
+function alertUser(title, sub, urgent, tag, extra) {
   const bar = $('#alertBar');
   bar.className = urgent ? 'urgent' : '';
-  bar.innerHTML = `<div><div class="at">${esc(title)}</div>${sub ? `<div class="as">${esc(sub)}</div>` : ''}</div><button data-act="alert-close">OK</button>`;
+  bar.innerHTML = `<div><div class="at">${esc(title)}</div>${sub ? `<div class="as">${esc(sub)}</div>` : ''}</div>${extra || ''}<button data-act="alert-close">OK</button>`;
   bar.hidden = false;
   clearTimeout(alertTimer); alertTimer = setTimeout(() => { bar.hidden = true; }, urgent ? 120000 : 45000);
   beep(urgent);
@@ -752,6 +755,55 @@ function toast(msg, kind) {
   $('#toasts').appendChild(el); setTimeout(() => el.remove(), 6000);
 }
 
+/* ---------------- call to pit ---------------- */
+const CALL_TTL = 20 * 60000;
+let callAlertId = null;
+const norm = x => String(x || '').trim().toLowerCase();
+function activeCalls() {
+  const now = Date.now();
+  return Object.entries(SD.calls || {}).map(([id, c]) => ({ id, ...c })).filter(c => !c.done && now - (c.t || 0) < CALL_TTL).sort((a, b) => b.t - a.t);
+}
+function callIsForMe(c) { return c.to === '*' || (S.member && norm(c.to) === norm(S.member)); }
+function onCalls() {
+  const isTV = !!S.tv;
+  if (callAlertId && (SD.calls[callAlertId]?.done || SD.calls[callAlertId]?.ack)) { $('#alertBar').hidden = true; callAlertId = null; }
+  for (const c of activeCalls()) {
+    if (c.ack || c.done) { if (callAlertId === c.id) { $('#alertBar').hidden = true; callAlertId = null; } }
+    if (c.ack) { if ((isTV || norm(c.by) === norm(S.member)) && once(`call:${c.id}:ack`)) toast(`✓ ${c.ack.by || c.to} is on the way to the pit`, 'good'); continue; }
+    if ((callIsForMe(c) || isTV) && once(`call:${c.id}`)) {
+      const who = c.to === '*' ? 'EVERYONE' : c.to.toUpperCase();
+      const mine = callIsForMe(c); callAlertId = c.id;
+      alertUser(`📣 ${who} — BACK TO THE PIT NOW`, `${c.reason ? c.reason + ' · ' : ''}called by ${c.by || '?'} at ${hm(c.t)}`, true, 'call-' + c.id,
+        mine ? `<button class="ackbtn" data-act="call-ack" data-id="${esc(c.id)}">🏃 On my way</button>` : '');
+    }
+  }
+  renderCallFab(); renderTop();
+}
+function renderCallFab() {
+  const n = activeCalls().filter(c => !c.ack).length;
+  const fab = $('#callFab'); if (!fab) return;
+  fab.querySelector('.cfn').textContent = n ? n : '';
+  fab.classList.toggle('live', n > 0);
+}
+function callModal() {
+  const names = (S.roster || []).filter(Boolean);
+  const list = activeCalls();
+  openModal(`<div class="row"><h2 style="margin:0">📣 Call to pit</h2><span class="sp"></span><button class="btn small" data-act="modal-close">✕</button></div>
+    <div class="muted small" style="margin:4px 0 10px">Their phone (and the pit TV) will alarm until they tap “On my way”.${Store.mode === 'cloud' ? '' : ' <b class="warn">Team sync is off — calls only show on this device.</b>'}</div>
+    <label class="f">Who?</label>
+    <div class="seg" id="callWho"><button class="on" data-act="call-pick" data-n="*">Everyone</button>${names.map(n => `<button data-act="call-pick" data-n="${esc(n)}">${esc(n)}</button>`).join('')}</div>
+    <input type="text" id="callName" placeholder="…or type a name" style="margin-top:8px">
+    <label class="f">Why? (optional)</label>
+    <div class="seg">${['Repair needed', 'Queue now', 'Drive team', 'Judges here', 'Meeting'].map(r => `<button data-act="call-reason" data-r="${esc(r)}">${esc(r)}</button>`).join('')}</div>
+    <input type="text" id="callReason" placeholder="Reason" style="margin-top:8px">
+    <button class="btn primary" data-act="call-send" style="width:100%;margin-top:14px;padding:14px;font-size:18px">📣 CALL NOW</button>
+    ${list.length ? `<h3 style="margin-top:16px">Active calls</h3>${list.map(c => `<div class="row callrow"><b>${esc(c.to === '*' ? 'Everyone' : c.to)}</b>
+      <span class="muted small">${esc(c.reason || '')} · ${hm(c.t)} by ${esc(c.by || '?')}</span><span class="sp"></span>
+      ${c.ack ? `<span class="ok small">✓ ${esc(c.ack.by)} on the way</span>` : '<span class="warn small">waiting…</span>'}
+      <button class="btn small" data-act="call-clear" data-id="${esc(c.id)}">Clear</button></div>`).join('')}` : ''}
+    ${names.length ? '' : '<div class="muted small" style="margin-top:10px">Tip: add team members in Settings → Team members.</div>'}`);
+}
+
 /* ---------------- screen wake lock (TV) ---------------- */
 let wakeLock = null;
 async function keepAwake() {
@@ -769,6 +821,19 @@ $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeM
 const who = () => S.member || 'someone';
 const A = {
   'go': el => { location.hash = el.dataset.v; },
+  'call-open': () => { unlockAudio(); callModal(); },
+  'call-pick': el => { el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el)); $('#callName').value = ''; },
+  'call-reason': el => { $('#callReason').value = el.dataset.r; },
+  'call-send': async () => {
+    const typed = $('#callName').value.trim(), picked = $('#callWho button.on')?.dataset.n || '*';
+    const to = typed || picked;
+    const id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    once(`call:${id}`);
+    await Store.put('calls', id, { to, reason: $('#callReason').value.trim(), by: who(), t: Date.now(), ack: null, done: false });
+    closeModal(); toast(`📣 Called ${to === '*' ? 'everyone' : to} to the pit`, 'good');
+  },
+  'call-ack': async el => { await Store.put('calls', el.dataset.id, { ack: { by: who(), t: Date.now() } }); $('#alertBar').hidden = true; toast('Sent: on my way 🏃', 'good'); },
+  'call-clear': async el => { await Store.put('calls', el.dataset.id, { done: true }); callModal(); },
   'match': el => { openModal(matchDetail(el.dataset.k), 'wide'); },
   'alert-close': () => { $('#alertBar').hidden = true; },
   'sound-unlock': () => { unlockAudio(); setTimeout(() => beep(false), 150); },
@@ -911,7 +976,7 @@ function readSettingsForm(apply) {
     const k = el.dataset.s;
     if (el.type === 'checkbox') S[k] = el.checked;
     else if (el.type === 'number') S[k] = el.value === '' ? S[k] : +el.value;
-    else if (k === 'checklist') S[k] = el.value.split('\n').map(x => x.trim()).filter(Boolean);
+    else if (k === 'checklist' || k === 'roster') S[k] = el.value.split('\n').map(x => x.trim()).filter(Boolean);
     else S[k] = el.value.trim();
   });
   S.eventKey = String(S.eventKey || '').toLowerCase();
@@ -954,7 +1019,8 @@ async function refresh(force) {
 let tickN = 0;
 function tick() {
   const now = Date.now();
-  $('#clock').textContent = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  const d = new Date(now);
+  $('#clock').innerHTML = `<span class="cdate">${esc(d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }))}</span><span class="ctime">${pad(d.getHours())}:${pad(d.getMinutes())}<span class="csec">:${pad(d.getSeconds())}</span></span>`;
   document.querySelectorAll('[data-cd]').forEach(el => { el.textContent = fmtCD(+el.dataset.cd - now); });
   document.querySelectorAll('[data-el]').forEach(el => { el.textContent = fmtEl(now - +el.dataset.el); });
   if (++tickN % 15 === 0) renderAll(); // re-evaluate states (queue now, charged, etc.)

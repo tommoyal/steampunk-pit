@@ -252,3 +252,23 @@ body.tv .tvbtn:active{transform:scale(.98)}
 .rw.us{background:rgba(212,162,76,.2);outline:2px solid var(--brass);transform:scale(1.02)}
 .rw.us .rr,.rw.us .rt{color:var(--brass2)}
 body.tv .rw{padding:2px 8px} body.tv .rw .rt{font-size:20px} body.tv .rw.us .rt{font-size:24px}
+
+/* clock with date + seconds */
+.clock{display:flex;align-items:baseline;gap:8px;min-width:0;white-space:nowrap}
+.clock .cdate{font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.04em}
+.clock .csec{font-size:.7em;color:var(--muted)}
+body.tv .clock .cdate{font-size:18px}
+@media (max-width:640px){ .clock .cdate{display:none} }
+
+/* call to pit */
+#callFab{position:fixed;left:12px;bottom:calc(74px + env(safe-area-inset-bottom));z-index:40;display:flex;align-items:center;gap:6px;
+  background:var(--copper);color:#fff;border:0;border-radius:999px;padding:10px 14px;font-size:18px;font-weight:700;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+#callFab .cfl{font-size:13px;letter-spacing:.04em}
+#callFab .cfn:not(:empty){background:#fff;color:var(--red);border-radius:999px;padding:0 7px;font-size:13px}
+#callFab.live{background:var(--red);animation:pulse .8s infinite alternate}
+body.tv #callFab{bottom:16px;left:auto;right:16px;font-size:22px;padding:12px 18px}
+@media (max-width:640px){ #callFab .cfl{display:none} }
+.ackbtn{background:#fff!important;color:var(--red)!important;font-size:18px!important;padding:10px 16px!important}
+.callrow{padding:8px 0;border-bottom:1px solid var(--line)}
+body.tv #toasts{right:auto;left:16px}
+@media (max-width:640px){ #alertBar{flex-wrap:wrap} #alertBar .ackbtn{flex:1;margin-left:0!important} }
