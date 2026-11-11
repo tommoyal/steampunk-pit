@@ -248,7 +248,7 @@ body.tv .tvbtn:active{transform:scale(.98)}
 .rw .rt{font-family:var(--num);font-weight:700;font-size:17px}
 .rw .rn{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rw .rs{font-family:var(--num);font-size:15px}
-.rw.blur{filter:blur(1.6px);opacity:.5}
+.rw.blur{filter:blur(0.6px);opacity:.7}
 .rw.us{background:rgba(212,162,76,.2);outline:2px solid var(--brass);transform:scale(1.02)}
 .rw.us .rr,.rw.us .rt{color:var(--brass2)}
 body.tv .rw{padding:2px 8px} body.tv .rw .rt{font-size:20px} body.tv .rw.us .rt{font-size:24px}
