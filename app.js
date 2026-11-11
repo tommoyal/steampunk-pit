@@ -83,8 +83,16 @@ function normTBA(m) {
     winner: m.winning_alliance, played: rs != null && bs != null && rs >= 0 && bs >= 0,
     sched: m.time ? m.time * 1000 : null, pred: m.predicted_time ? m.predicted_time * 1000 : null,
     actual: m.actual_time ? m.actual_time * 1000 : null,
+    bd: m.score_breakdown ? { red: pickBreakdown(m.score_breakdown.red), blue: pickBreakdown(m.score_breakdown.blue) } : null,
+    videos: (m.videos || []).filter(v => v.type === 'youtube').map(v => v.key),
     order: (LEVEL[m.comp_level] ?? 9) * 10000 + m.set_number * 100 + m.match_number
   };
+}
+function pickBreakdown(b) {
+  if (!b) return null;
+  const find = re => { const k = Object.keys(b).find(k => re.test(k) && typeof b[k] === 'number'); return k ? b[k] : null; };
+  return { auto: find(/^autoPoints$/i), teleop: find(/^teleopPoints$/i), endgame: find(/^end ?game.*points$/i),
+    fouls: find(/^foulPoints$/i), rp: find(/^rp$/i) };
 }
 function normRankings(r) {
   if (!r || !r.rankings) return null;
@@ -135,7 +143,7 @@ async function refreshSB() {
     const [ms, ts] = await Promise.all([
       sbApi(`/matches?event=${evKey()}&limit=1000`), sbApi(`/team_events?event=${evKey()}&limit=200`)
     ]);
-    D.sb.matches = Object.fromEntries((ms || []).map(m => [m.key, { redWin: m.pred?.red_win_prob ?? null }]));
+    D.sb.matches = Object.fromEntries((ms || []).map(m => [m.key, { redWin: m.pred?.red_win_prob ?? null, redScore: m.pred?.red_score ?? null, blueScore: m.pred?.blue_score ?? null }]));
     D.sb.teams = Object.fromEntries((ts || []).map(t => [Number(t.team), { epa: t.epa?.total_points?.mean ?? t.epa?.mean ?? null }]));
     D.updated.sb = Date.now(); delete D.errors.sb;
   } catch (e) { D.errors.sb = `Statbotics: ${e.message}`; }
@@ -163,7 +171,9 @@ function demoData() {
       rs: played ? a : -1, bs: played ? b : -1, winner: played ? (a > b ? 'red' : a < b ? 'blue' : '') : '',
       played, sched, pred: start, actual: played ? start : null, order: 10100 + i
     });
-    sbm[`demo_qm${i}`] = { redWin: p };
+    sbm[`demo_qm${i}`] = { redWin: p, redScore: Math.round(70 + p * 50), blueScore: Math.round(70 + (1 - p) * 50) };
+    if (played) { const split = (t, f) => ({ auto: Math.round(t * .25), teleop: Math.round(t * .55), endgame: t - Math.round(t * .25) - Math.round(t * .55) - f, fouls: f, rp: null });
+      matches[matches.length - 1].bd = { red: split(a, i % 5 === 0 ? 6 : 0), blue: split(b, i % 7 === 0 ? 3 : 0) }; }
   }
   const st = Object.fromEntries(DEMO_TEAMS.map(n => [n, { w: 0, l: 0, t: 0, rp: 0, p: 0 }]));
   for (const m of matches) if (m.played) for (const [side, list] of [['red', m.red], ['blue', m.blue]]) {
@@ -417,7 +427,7 @@ function matchRow(m, M) {
   else right = '';
   const tag = n => `<b class="${n === M.T ? 'us' : ''}">${n}</b>`;
   const db = SD.debrief[safeId(m.key)];
-  return `<div class="mrow ${m.color} ${m.played ? 'done' : ''} ${isNext ? 'is-next' : ''}">
+  return `<div class="mrow ${m.color} ${m.played ? 'done' : ''} ${isNext ? 'is-next' : ''}" data-act="match" data-k="${esc(m.key)}" title="Match details">
     <div class="mlabel">${esc(shortLabel(m.label))}</div>
     <div class="mtime">${hm(m.start)}</div>
     <div class="mteams"><span class="w"><span class="lbl">w/</span>${m.allies.filter(n => n !== M.T).map(tag).join(' ')}</span>
@@ -565,6 +575,55 @@ function viewSettings() {
   <div style="position:sticky;bottom:80px;display:flex;gap:10px"><button class="btn primary" data-act="save-settings" style="flex:1;padding:12px">Save</button></div>`;
 }
 
+/* ---------------- match detail window ---------------- */
+function matchDetail(key) {
+  const m = (M.all || []).find(x => x.key === key); if (!m) return '<div class="muted">Match not found.</div>';
+  const T = M.T, now = Date.now(), R = D.rankings, real = !S.demo && !m.nexusOnly;
+  const rk = n => R?.rows.find(r => r.team === n);
+  const epa = n => D.sb.teams[n]?.epa;
+  const sbm = D.sb.matches[m.key] || {};
+  const teamRow = (n, side) => { const r = rk(n); return `<tr class="${n === T ? 'us' : ''}"><td class="n"><b>${n}</b></td><td class="small">${esc(D.teams[n] || '')}</td>
+    <td>${r ? '#' + r.rank : '—'}</td><td>${r ? `${r.w}-${r.l}-${r.t}` : '—'}</td><td>${epa(n) != null ? Number(epa(n)).toFixed(1) : '—'}</td></tr>`; };
+  const sumEPA = list => { const v = list.map(epa); return v.every(x => x != null) ? v.reduce((a, b) => a + b, 0).toFixed(0) : null; };
+  const allianceBox = side => {
+    const list = side === 'red' ? m.red : m.blue, score = side === 'red' ? m.rs : m.bs, pred = side === 'red' ? sbm.redScore : sbm.blueScore;
+    const won = m.played && ((m.winner === side) || (!m.winner && m.rs !== m.bs && (side === 'red' ? m.rs > m.bs : m.bs > m.rs)));
+    return `<div class="mdal ${side}"><div class="row"><b class="mdside">${side.toUpperCase()}${m.color === side ? ' · US' : ''}</b><span class="sp"></span>
+      ${m.played && score >= 0 ? `<span class="mdscore ${won ? 'won' : ''}">${score}</span>` : pred != null ? `<span class="muted small">pred. ${Math.round(pred)}</span>` : ''}</div>
+      <table class="rank"><thead><tr><th>Team</th><th></th><th>Rank</th><th>W-L-T</th><th>EPA</th></tr></thead><tbody>${list.map(n => teamRow(n, side)).join('')}</tbody></table>
+      ${sumEPA(list) ? `<div class="muted small">Alliance EPA ${sumEPA(list)}</div>` : ''}</div>`;
+  };
+  const bdRows = [['Auto', 'auto'], ['Teleop', 'teleop'], ['Endgame', 'endgame'], ['Fouls received', 'fouls'], ['Ranking points', 'rp']]
+    .filter(([, k]) => m.bd && (m.bd.red?.[k] != null || m.bd.blue?.[k] != null));
+  const ck = checkProgress(m), bat = ck.battery && SD.batteries[ck.battery], db = SD.debrief[safeId(m.key)];
+  const st = m.nx?.status;
+  return `<div class="row"><h2 style="margin:0">${esc(m.label)}</h2>
+      ${m.color ? `<span class="bumper ${m.color}" style="font-size:15px">${m.color.toUpperCase()} ${m.station}</span>` : ''}
+      ${m.result ? `<span class="res ${m.result}">${m.result === 'W' ? 'WIN' : m.result === 'L' ? 'LOSS' : 'TIE'}</span>` : st ? `<span class="pill ${/now|deck|field/i.test(st) ? 'hot' : 'soon'}">${esc(st)}</span>` : ''}
+      <span class="sp"></span><button class="btn small" data-act="modal-close">✕</button></div>
+    <div class="muted small" style="margin:6px 0 12px">${m.played ? `Played ${hm(m.actual || m.start)}` : `Starts ~${hm(m.start)} (in <span data-cd="${m.start}">${fmtCD((m.start || now) - now)}</span>)`}
+      ${m.sched ? ` · scheduled ${hm(m.sched)}` : ''}${!m.played && m.queue ? ` · queue ~${hm(m.queue)}` : ''}${!m.played && m.nx?.t?.estimatedOnDeckTime ? ` · on deck ~${hm(m.nx.t.estimatedOnDeckTime)}` : ''}</div>
+    ${m.played && m.rs >= 0 ? `<div class="mdbig"><span class="r">${m.rs}</span><span class="muted"> – </span><span class="b">${m.bs}</span></div>`
+      : sbm.redWin != null ? `<div class="mdpred"><div class="bar"><i style="width:${sbm.redWin * 100}%"></i></div>
+        <div class="row small"><span class="r">Red ${pct(sbm.redWin)}${sbm.redScore != null ? ' · ~' + Math.round(sbm.redScore) : ''}</span><span class="sp"></span>
+        <span class="b">${sbm.blueScore != null ? '~' + Math.round(sbm.blueScore) + ' · ' : ''}Blue ${pct(1 - sbm.redWin)}</span></div><div class="muted small">Statbotics prediction</div></div>` : ''}
+    <div class="mdgrid">${allianceBox('red')}${allianceBox('blue')}</div>
+    ${bdRows.length ? `<h3 style="margin-top:12px">Score breakdown</h3><table class="rank"><thead><tr><th></th><th class="r">Red</th><th class="b">Blue</th></tr></thead><tbody>
+      ${bdRows.map(([l, k]) => `<tr><td>${l}</td><td class="n">${m.bd.red?.[k] ?? '—'}</td><td class="n">${m.bd.blue?.[k] ?? '—'}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${m.color ? `<h3 style="margin-top:12px">Our prep</h3><div class="nc-foot" style="margin-top:0">
+        <span class="${ck.done ? 'ok' : ''}">Checklist <b>${ck.done ? 'READY ✓' : `${ck.n}/${ck.total}`}</b></span><span>Battery <b>${bat ? esc(bat.name) : '—'}</b></span>
+        ${m.winProb != null ? `<span>Our win chance <b>${pct(m.winProb)}</b></span>` : ''}</div>
+      ${db ? `<div class="dbf" style="margin-top:8px">${db.rating ? `<b>${'★'.repeat(db.rating)}${'☆'.repeat(5 - db.rating)}</b> ` : ''}<span class="muted small">debrief by ${esc(db.by || '?')}</span>
+        ${db.broke ? `<div class="bad">Broke: ${esc(db.broke)}</div>` : ''}${db.worked ? `<div class="ok">Worked: ${esc(db.worked)}</div>` : ''}${db.driver ? `<div>Driver: ${esc(db.driver)}</div>` : ''}</div>` : ''}` : ''}
+    <div class="row" style="margin-top:14px">
+      ${m.color && !m.played ? `<button class="btn small" data-act="md-check" data-k="${esc(m.key)}">✅ Checklist</button>` : ''}
+      ${m.color ? `<button class="btn small" data-act="db-open" data-k="${esc(m.key)}">📝 ${db ? 'Edit' : 'Write'} debrief</button>` : ''}
+      ${(m.videos || []).map((v, i) => `<a class="btn small" style="text-decoration:none" target="_blank" rel="noopener" href="https://www.youtube.com/watch?v=${esc(v)}">▶ Replay${m.videos.length > 1 ? ' ' + (i + 1) : ''}</a>`).join('')}
+      ${real ? `<a class="btn small" style="text-decoration:none" target="_blank" rel="noopener" href="https://www.thebluealliance.com/match/${esc(m.key)}">TBA ↗</a>
+      <a class="btn small" style="text-decoration:none" target="_blank" rel="noopener" href="https://www.statbotics.io/match/${esc(m.key)}">Statbotics ↗</a>` : ''}
+    </div>`;
+}
+
 /* ---------------- TV dashboard ---------------- */
 function renderTV(M) {
   const i = M.next ? M.ours.indexOf(M.next) : M.ours.length;
@@ -694,7 +753,7 @@ async function keepAwake() {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { keepAwake(); refresh(true); } });
 
 /* ---------------- modals ---------------- */
-function openModal(html) { const m = $('#modal'); m.innerHTML = `<div class="mbox">${html}</div>`; m.hidden = false; const f = m.querySelector('input,textarea'); if (f) setTimeout(() => f.focus(), 50); }
+function openModal(html, cls) { const m = $('#modal'); m.innerHTML = `<div class="mbox ${cls || ''}">${html}</div>`; m.hidden = false; const f = m.querySelector('input,textarea'); if (f) setTimeout(() => f.focus(), 50); }
 function closeModal() { const m = $('#modal'); m.hidden = true; m.innerHTML = ''; }
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 
@@ -702,6 +761,7 @@ $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeM
 const who = () => S.member || 'someone';
 const A = {
   'go': el => { location.hash = el.dataset.v; },
+  'match': el => { openModal(matchDetail(el.dataset.k), 'wide'); },
   'alert-close': () => { $('#alertBar').hidden = true; },
   'sound-unlock': () => { unlockAudio(); setTimeout(() => beep(false), 150); },
   'fullscreen': () => { const d = document; (d.fullscreenElement ? d.exitFullscreen() : d.documentElement.requestFullscreen()).catch(() => { }); },
@@ -777,6 +837,7 @@ const A = {
     closeModal(); toast('Debrief saved', 'good');
   },
   'modal-close': closeModal,
+  'md-check': el => { checkSel = el.dataset.k; closeModal(); location.hash = 'checklist'; },
   'test-alert': () => { unlockAudio(); setTimeout(() => alertUser('QUEUE NOW — Qual 12', 'RED bumpers · station 2 (test)', true, 'test'), 150); },
   'notify-perm': async () => {
     if (!('Notification' in window)) { toast('This browser has no notifications. On iPhone: Share → Add to Home Screen first.', 'bad'); return; }
