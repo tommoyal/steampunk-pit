@@ -1077,24 +1077,26 @@ document.addEventListener('touchend', unlockAudio);
 // iPhone pauses audio when the app goes to the background; wake it again when it comes back
 document.addEventListener('visibilitychange', () => { if (!document.hidden && actx && actx.state !== 'running') actx.resume().then(renderTop).catch(() => { }); });
 window.addEventListener('focus', () => { if (actx && actx.state !== 'running') actx.resume().then(renderTop).catch(() => { }); });
-/* Alarm: a soft, bell-like chime (pure sine tones that fade out), played loud and repeated. */
+/* Alarm: bright "ding-dong" (option C) — rounded-square tone, gently limited so it is loud but not buzzy. */
 let alarmOut = null;
 function alarmChain() {
   if (alarmOut) return alarmOut;
-  const comp = actx.createDynamicsCompressor();
-  comp.threshold.value = -14; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.2;
-  const master = actx.createGain(); master.gain.value = 1;
-  comp.connect(master).connect(actx.destination);
-  return (alarmOut = comp);
+  const shaper = actx.createWaveShaper(), curve = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = Math.tanh(x * 1.6) / Math.tanh(1.6); }
+  shaper.curve = curve;
+  const master = actx.createGain(); master.gain.value = 0.98;
+  shaper.connect(master).connect(actx.destination);
+  return (alarmOut = shaper);
 }
-function bell(t, f, len) {
+function ding(t, f, len) {
   const g = actx.createGain();
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.9, t + 0.015);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.7, t + 0.005);
+  g.gain.setTargetAtTime(0.0001, t + 0.005, 1 / 1.5);           // slow fade, like the preview
+  g.gain.setValueAtTime(g.gain.value, t + len - 0.04); g.gain.linearRampToValueAtTime(0, t + len);
   g.connect(alarmChain());
-  for (const [mul, vol] of [[1, 1], [2, 0.25]]) {   // fundamental + a soft octave = bell tone
+  for (const [mul, vol] of [[1, 1], [3, 1 / 3], [5, 1 / 8]]) {   // fundamental + odd harmonics = bright tone
     const o = actx.createOscillator(), v = actx.createGain(); o.type = 'sine'; o.frequency.value = f * mul; v.gain.value = vol;
-    o.connect(v).connect(g); o.start(t); o.stop(t + len + 0.05);
+    o.connect(v).connect(g); o.start(t); o.stop(t + len + 0.02);
   }
 }
 async function beep(urgent) {
@@ -1103,11 +1105,10 @@ async function beep(urgent) {
   if (actx.state !== 'running') { try { await actx.resume(); } catch { } }
   if (actx.state !== 'running') return;
   let t = actx.currentTime + 0.03;
-  const notes = [784, 988, 1175];               // G5 B5 D6: a friendly rising "ding-ding-ding"
-  const rounds = urgent ? 4 : 2;                 // urgent ~4.5 s, normal ~2 s
+  const rounds = urgent ? 4 : 2;                 // urgent ~4.5 s, normal ~2.3 s
   for (let r = 0; r < rounds; r++) {
-    for (const f of notes) { bell(t, f, 0.7); t += 0.16; }
-    t += 0.65;
+    for (const f of [1568, 1175]) { ding(t, f, 0.4); t += 0.42; }
+    t += 0.3;
   }
 }
 /* Phone vibration (Android browsers; iPhone Safari does not allow websites to vibrate). */
