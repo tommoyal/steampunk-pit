@@ -529,7 +529,6 @@ function viewSettings() {
   const cb = (k, label) => `<label class="row" style="margin:8px 0"><input type="checkbox" data-s="${k}" ${S[k] ? 'checked' : ''}> ${label}</label>`;
   const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
   return `<h2>Settings</h2>
-  ${S.tv ? '<div class="card"><a class="btn primary" href="#matches" style="text-decoration:none">← Back to TV view</a></div>' : ''}
   <div class="card"><h3>This device</h3>
     ${f('member', 'Your name (shows on checklist ticks)', 'text', 'placeholder="e.g. Tom"')}
     ${cb('tv', '<b>Pit TV mode</b> — full-screen dashboard, keeps the screen awake')}
@@ -570,18 +569,18 @@ function viewSettings() {
 function renderTV(M) {
   const i = M.next ? M.ours.indexOf(M.next) : M.ours.length;
   const rows = M.ours.slice(Math.max(0, i - 2));
-  $('#tvSide').innerHTML = `${nextCard(M)}<div class="card tvlist"><h3>Our matches</h3><div class="mlist">${rows.map(m => matchRow(m, M)).join('') || '<div class="muted">No matches yet.</div>'}</div></div>`;
+  $('#tvSide').innerHTML = `<div class="tvbtn" data-act="go" data-v="checklist" title="Open checklist">${nextCard(M)}</div><div class="card tvlist"><h3>Our matches</h3><div class="mlist">${rows.map(m => matchRow(m, M)).join('') || '<div class="muted">No matches yet.</div>'}</div></div>`;
   const ck = M.next ? checkProgress(M.next) : null;
   const bl = battList().filter(b => b.status !== 'retired');
   const now = Date.now(), l = M.last;
   const errs = Object.entries(D.errors || {}).filter(([k]) => k !== 'sb').map(([, e]) => e);
   $('#tvStrip').innerHTML = `
-    <div class="card">${rankCardHTML(M, true)}</div>
-    <div class="card"><h3>Robot ${M.next ? '· ' + esc(shortLabel(M.next.label)) : ''}</h3>
+    <div class="card tvbtn" data-act="go" data-v="rankings" title="Open rankings">${rankCardHTML(M, true)}</div>
+    <div class="card tvbtn" data-act="go" data-v="checklist" title="Open checklist"><h3>Robot ${M.next ? '· ' + esc(shortLabel(M.next.label)) : ''}</h3>
       ${ck ? (ck.done ? '<div class="tvbig ok">READY ✓</div>' : `<div class="tvbig ${ck.n ? 'warn' : ''}">${ck.n}/${ck.total}</div><div class="tvsub">checklist done</div>`) : '<div class="tvsub">No upcoming match</div>'}
       ${ck && ck.battery && SD.batteries[ck.battery] ? `<div class="tvsub">Battery ${esc(SD.batteries[ck.battery].name)}</div>` : ck ? '<div class="tvsub warn">No battery picked</div>' : ''}</div>
-    <div class="card"><h3>Batteries</h3><div class="bchips">${bl.map(b => `<span class="bchip ${b.status}">${esc(b.name)}<small>${b.status === 'charging' ? fmtEl(now - (b.since || now)) : esc(battLabel(b))}</small></span>`).join('') || '<span class="tvsub">Add batteries on a phone</span>'}</div></div>
-    <div class="card"><h3>Last match</h3>${l ? `<div class="tvbig"><span class="res ${l.result}">${l.result || ''}</span> ${l.us ?? ''}–${l.them ?? ''}</div><div class="tvsub">${esc(l.label)}</div>` : '<div class="tvsub">None yet</div>'}
+    <div class="card tvbtn" data-act="go" data-v="batteries" title="Open batteries"><h3>Batteries</h3><div class="bchips">${bl.map(b => `<span class="bchip ${b.status}" data-act="batt-read" data-id="${esc(b.id)}" title="Log a reading">${esc(b.name)}<small>${b.status === 'charging' ? fmtEl(now - (b.since || now)) : esc(battLabel(b))}</small></span>`).join('') || '<span class="tvsub">Add batteries on a phone</span>'}</div></div>
+    <div class="card tvbtn" ${l ? `data-act="db-open" data-k="${esc(l.key)}" title="Write debrief"` : 'data-act="go" data-v="debrief"'}><h3>Last match</h3>${l ? `<div class="tvbig"><span class="res ${l.result}">${l.result || ''}</span> ${l.us ?? ''}–${l.them ?? ''}</div><div class="tvsub">${esc(l.label)}</div>` : '<div class="tvsub">None yet</div>'}
       ${M.delay != null && Math.abs(M.delay) >= 3 * 60000 ? `<div class="tvsub warn">Field ${Math.round(Math.abs(M.delay) / 60000)} min ${M.delay > 0 ? 'behind' : 'ahead'}</div>` : ''}
       ${errs.length ? `<div class="tvsub bad">${esc(errs[0])}</div>` : ''}${S.demo ? '<div class="tvsub warn">DEMO DATA</div>' : ''}</div>`;
 }
@@ -601,11 +600,11 @@ function renderAll(force) {
   M = buildModel();
   renderTop(); renderStream();
   if (document.body.classList.contains('tv')) renderTV(M);
-  else if (current !== 'settings' || force === 'nav') $('#view').innerHTML = (VIEWS[current] || viewMatches)(M);
+  else if (current !== 'settings' || force === 'nav') $('#view').innerHTML = (S.tv && current !== 'matches' ? '<a class="btn primary backtv" href="#matches">← Back to TV</a>' : '') + (VIEWS[current] || viewMatches)(M);
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === current));
 }
 function applyMode() {
-  document.body.classList.toggle('tv', !!S.tv && current !== 'settings');
+  document.body.classList.toggle('tv', !!S.tv && current === 'matches');
   keepAwake(); requestAnimationFrame(setTopH);
 }
 function setTopH() { document.documentElement.style.setProperty('--topH', $('#topbar').offsetHeight + 'px'); }
@@ -702,6 +701,7 @@ $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeM
 /* ---------------- actions ---------------- */
 const who = () => S.member || 'someone';
 const A = {
+  'go': el => { location.hash = el.dataset.v; },
   'alert-close': () => { $('#alertBar').hidden = true; },
   'sound-unlock': () => { unlockAudio(); setTimeout(() => beep(false), 150); },
   'fullscreen': () => { const d = document; (d.fullscreenElement ? d.exitFullscreen() : d.documentElement.requestFullscreen()).catch(() => { }); },
