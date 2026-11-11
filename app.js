@@ -1071,19 +1071,51 @@ function unlockAudio() {
   renderTop();
 }
 document.addEventListener('pointerdown', unlockAudio);
-function beep(urgent) {
-  if (!S.sound || !actx || actx.state !== 'running') return;
-  const seq = urgent ? [880, 0, 880, 0, 1175, 0, 1175, 0, 1568] : [660, 0, 880];
-  let t = actx.currentTime;
-  for (const f of seq) {
-    if (f) {
-      const o = actx.createOscillator(), g = actx.createGain();
-      o.type = 'square'; o.frequency.value = f;
-      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.22, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.17);
-      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + 0.2);
-    }
-    t += 0.19;
+/* Harsh alarm: two detuned sawtooth+square voices (a grating, dissonant buzz)
+   driven through distortion and a limiter so it is as loud as the speaker allows. */
+let alarmOut = null;
+function alarmChain() {
+  if (alarmOut) return alarmOut;
+  const shaper = actx.createWaveShaper(), curve = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = Math.tanh(x * 6); }
+  shaper.curve = curve;
+  const comp = actx.createDynamicsCompressor();
+  comp.threshold.value = -6; comp.ratio.value = 20; comp.attack.value = 0.001; comp.release.value = 0.05;
+  const master = actx.createGain(); master.gain.value = 0.9;
+  shaper.connect(comp).connect(master).connect(actx.destination);
+  return (alarmOut = shaper);
+}
+function buzz(t, f, len, sweepTo) {
+  const out = alarmChain(), g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.7, t + 0.005);
+  g.gain.setValueAtTime(0.7, t + len - 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  g.connect(out);
+  for (const [type, mul] of [['sawtooth', 1], ['square', 1.06], ['sawtooth', 2.02]]) {
+    const o = actx.createOscillator(); o.type = type;
+    o.frequency.setValueAtTime(f * mul, t);
+    if (sweepTo) o.frequency.linearRampToValueAtTime(sweepTo * mul, t + len);
+    o.connect(g); o.start(t); o.stop(t + len + 0.02);
   }
+}
+function beep(urgent) {
+  vibrate(urgent);
+  if (!S.sound || !actx || actx.state !== 'running') return;
+  let t = actx.currentTime + 0.02;
+  if (urgent) {
+    // ~3.5 s: three rounds of rapid harsh pulses + a rising siren sweep
+    for (let r = 0; r < 3; r++) {
+      for (let i = 0; i < 4; i++) { buzz(t, 1400, 0.09); t += 0.12; }
+      buzz(t, 700, 0.55, 1600); t += 0.68;
+    }
+  } else {
+    // ~1.3 s: two-tone harsh "eh-AH eh-AH"
+    for (let i = 0; i < 2; i++) { buzz(t, 620, 0.22); t += 0.27; buzz(t, 930, 0.3); t += 0.4; }
+  }
+}
+/* Phone vibration (Android browsers; iPhone Safari does not allow websites to vibrate). */
+function vibrate(urgent) {
+  if (!('vibrate' in navigator)) return;
+  try { navigator.vibrate(urgent ? [600, 150, 600, 150, 600, 150, 1200] : [400, 150, 400]); } catch { }
 }
 let alertTimer = null;
 function alertUser(title, sub, urgent, tag, extra) {
@@ -1094,7 +1126,7 @@ function alertUser(title, sub, urgent, tag, extra) {
   clearTimeout(alertTimer); alertTimer = setTimeout(() => { bar.hidden = true; }, urgent ? 120000 : 45000);
   beep(urgent);
   if (S.notify && 'Notification' in window && Notification.permission === 'granted') {
-    const opts = { body: sub || '', tag: tag || title, icon: 'icon-192.png', renotify: true };
+    const opts = { body: sub || '', tag: tag || title, icon: 'icon-192.png', renotify: true, requireInteraction: !!urgent, vibrate: urgent ? [600, 150, 600, 150, 600, 150, 1200] : [400, 150, 400] };
     (navigator.serviceWorker?.ready || Promise.reject()).then(r => r.showNotification(title, opts)).catch(() => { try { new Notification(title, opts); } catch { } });
   }
 }
@@ -1199,9 +1231,19 @@ function activeCalls() {
   return Object.entries(SD.calls || {}).map(([id, c]) => ({ id, ...c })).filter(c => !c.done && now - (c.t || 0) < CALL_TTL).sort((a, b) => b.t - a.t);
 }
 function callIsForMe(c) { return c.to === '*' || (S.member && norm(c.to) === norm(S.member)); }
+let callRing = null;
+function stopCallRing() { clearInterval(callRing); callRing = null; try { navigator.vibrate?.(0); } catch { } }
+function startCallRing(id) {
+  stopCallRing(); const t0 = Date.now();
+  callRing = setInterval(() => {
+    const c = SD.calls?.[id];
+    if (callAlertId !== id || !c || c.ack || c.done || $('#alertBar').hidden || Date.now() - t0 > 120000) return stopCallRing();
+    beep(true);
+  }, 5000);
+}
 function onCalls() {
   const isTV = !!S.tv;
-  if (callAlertId && (SD.calls[callAlertId]?.done || SD.calls[callAlertId]?.ack)) { $('#alertBar').hidden = true; callAlertId = null; }
+  if (callAlertId && (SD.calls[callAlertId]?.done || SD.calls[callAlertId]?.ack)) { $('#alertBar').hidden = true; callAlertId = null; stopCallRing(); }
   for (const c of activeCalls()) {
     if (c.ack || c.done) { if (callAlertId === c.id) { $('#alertBar').hidden = true; callAlertId = null; } }
     if (c.ack) { if ((isTV || norm(c.by) === norm(S.member)) && once(`call:${c.id}:ack`)) toast(`✓ ${c.ack.by || c.to} is on the way to the pit`, 'good'); continue; }
@@ -1210,6 +1252,7 @@ function onCalls() {
       const mine = callIsForMe(c); callAlertId = c.id;
       alertUser(`📣 ${who} — BACK TO THE PIT NOW`, `${c.reason ? c.reason + ' · ' : ''}called by ${c.by || '?'} at ${hm(c.t)}`, true, 'call-' + c.id,
         mine ? `<button class="ackbtn" data-act="call-ack" data-id="${esc(c.id)}">🏃 On my way</button>` : '');
+      if (mine) startCallRing(c.id);
     }
   }
   renderCallFab(); renderTop();
@@ -1295,10 +1338,10 @@ const A = {
     const sent = await pushCall(id, to, reason, who());
     if (sent && to !== '*' && !topicFor(to)) toast(`${to} has no personal channel yet — sent to the team channel`);
   },
-  'call-ack': async el => { await Store.put('calls', el.dataset.id, { ack: { by: who(), t: Date.now() } }); $('#alertBar').hidden = true; toast('Sent: on my way 🏃', 'good'); },
+  'call-ack': async el => { await Store.put('calls', el.dataset.id, { ack: { by: who(), t: Date.now() } }); $('#alertBar').hidden = true; stopCallRing(); toast('Sent: on my way 🏃', 'good'); },
   'call-clear': async el => { await Store.put('calls', el.dataset.id, { done: true }); callModal(); },
   'match': el => { openModal(matchDetail(el.dataset.k), 'wide'); },
-  'alert-close': () => { $('#alertBar').hidden = true; },
+  'alert-close': () => { $('#alertBar').hidden = true; stopCallRing(); },
   'sound-unlock': () => { unlockAudio(); setTimeout(() => beep(false), 150); },
   'fullscreen': () => { const d = document; (d.fullscreenElement ? d.exitFullscreen() : d.documentElement.requestFullscreen()).catch(() => { }); },
   'stream-pick': el => { S.streamIdx = +el.dataset.i; saveSettings(); renderStream(); },

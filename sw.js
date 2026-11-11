@@ -1,7 +1,7 @@
 /* 1577 Pit — offline support.
    Network-first: when online, always load the newest files from the server;
    the cache is only used when the network is unavailable (offline at events). */
-const CACHE = 'pit-v15';
+const CACHE = 'pit-v16';
 const SHELL = ['./', './index.html', './app.js', './style.css', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => {
   // cache:'reload' skips the browser's HTTP cache so we never store an old copy
