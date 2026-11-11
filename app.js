@@ -32,10 +32,11 @@ const S = Object.assign({
   team: 1577, year: seasonYear(), eventKey: '', tbaKey: '', nexusKey: '', firebase: '',
   queueLead: 20, alertLead: 5, chargeMin: 45, sound: true, notify: false,
   streamUrl: '', streamIdx: 0, streamCollapsed: false, demo: true, tv: false, member: '',
-  checklist: DEFAULT_CHECKLIST, roster: []
+  checklist: DEFAULT_CHECKLIST, roster: [],
+  ntfyOn: true, ntfySend: null, ntfyServer: 'https://ntfy.sh', ntfyTeam: '', ntfyQueue: '', ntfyMe: ''
 }, LS.get('pit.settings', {}));
 const saveSettings = () => LS.set('pit.settings', S);
-const SHARE_KEYS = ['team', 'year', 'eventKey', 'tbaKey', 'nexusKey', 'firebase', 'queueLead', 'alertLead', 'chargeMin', 'streamUrl', 'demo', 'checklist', 'roster'];
+const SHARE_KEYS = ['team', 'year', 'eventKey', 'tbaKey', 'nexusKey', 'firebase', 'queueLead', 'alertLead', 'chargeMin', 'streamUrl', 'demo', 'checklist', 'roster', 'ntfyOn', 'ntfyServer', 'ntfyTeam', 'ntfyQueue'];
 const evKey = () => S.demo ? 'demo' : String(S.eventKey || '').trim().toLowerCase();
 
 /* ---------------- formatting ---------------- */
@@ -297,13 +298,14 @@ const Store = {
 window.addEventListener('storage', e => {
   if (e.key && e.key.startsWith('pit.store.')) (Store.localSubs[e.key.slice(10)] || []).forEach(f => f());
 });
-const SD = { batteries: {}, check: {}, debrief: {}, calls: {} };
+const SD = { batteries: {}, check: {}, debrief: {}, calls: {}, members: {} };
 let unsubs = [];
 function subscribeShared() {
   unsubs.forEach(u => { try { u && u(); } catch { } }); unsubs = [];
   const ev = evKey() || 'none';
   unsubs.push(Store.watch('batteries', o => { SD.batteries = o; renderAll(); }));
   unsubs.push(Store.watch('calls', o => { SD.calls = o; onCalls(); }));
+  unsubs.push(Store.watch('members', o => { SD.members = o; }));
   unsubs.push(Store.watch('check_' + ev, o => { SD.check = o; renderAll(); }));
   unsubs.push(Store.watch('debrief_' + ev, o => { SD.debrief = o; renderAll(); }));
 }
@@ -577,6 +579,16 @@ function viewSettings() {
   <div class="card"><h3>Team sync</h3>
     <div class="muted small">Status: <b class="${Store.mode === 'cloud' ? 'ok' : 'warn'}">${Store.mode === 'cloud' ? 'Connected — checklist, batteries and debriefs are shared' : 'This device only'}</b>${Store.err ? ` · <span class="bad">${esc(Store.err)}</span>` : ''}</div>
     <label class="f">Firebase config (paste the firebaseConfig block)</label><textarea data-s="firebase" placeholder="const firebaseConfig = { apiKey: '…', projectId: '…', … };">${esc(S.firebase)}</textarea></div>
+  <div class="card"><h3>Phone alerts (ntfy)</h3>
+    <div class="muted small">Alerts that reach locked phones. Each member installs the free <b>ntfy</b> app (App Store / Google Play), taps <b>+</b>, and subscribes to the channels below (server: ntfy.sh).</div>
+    ${cb('ntfyOn', 'Phone alerts on')}
+    ${cb('ntfySend', '<b>This device sends queue alerts & results</b> — turn on for the pit TV only')}
+    ${[['ntfyTeam', 'Team channel — “Everyone” calls (all members)'], ['ntfyQueue', 'Queue channel — queue alerts & results (drive team, pit crew)'], ['ntfyMe', 'My personal channel — calls just for me']].map(([k, l]) => `
+      <label class="f">${l}</label><div class="row" style="flex-wrap:nowrap"><input type="text" data-s="${k}" value="${esc(S[k])}" readonly onclick="this.select()">
+      <button class="btn small" data-act="ntfy-copy" data-k="${k}">Copy</button></div>`).join('')}
+    <div class="row" style="margin-top:10px"><button class="btn small" data-act="ntfy-test">Send test to my phone</button>
+      <button class="btn small" data-act="ntfy-new" title="Makes new team channels — everyone must re-subscribe">New team channels</button></div>
+    <div class="muted small" style="margin-top:6px">Your personal channel is registered with the team under “Your name” (needs team sync). Calls to people without one go to the team channel.</div></div>
   <div class="card"><h3>Team members</h3><div class="muted small">One name per line — used by “Call to pit”. Each member should put the same name in “Your name” above.</div>
     <textarea data-s="roster" style="min-height:120px" placeholder="Tom\nNoa\nDaniel">${esc((S.roster || []).join('\n'))}</textarea></div>
   <div class="card"><h3>Checklist items</h3><div class="muted small">One per line.</div>
@@ -730,17 +742,26 @@ function checkAlerts() {
   const side = `${m.color.toUpperCase()} bumpers · station ${m.station}`;
   if (m.queue) {
     const pre = m.queue - S.alertLead * 60000;
-    if (now >= pre && now < m.queue && once(`${ev}:${m.key}:pre`)) alertUser(`${lbl} — queue in ${Math.max(1, Math.round((m.queue - now) / 60000))} min`, side + ' · run the checklist', false, m.key);
-    if (now >= m.queue && now < (m.start || m.queue) + 5 * 60000 && once(`${ev}:${m.key}:q`)) alertUser(`QUEUE NOW — ${lbl}`, side, true, m.key);
+    if (now >= pre && now < m.queue && once(`${ev}:${m.key}:pre`)) {
+      const t = `${lbl} — queue in ${Math.max(1, Math.round((m.queue - now) / 60000))} min`;
+      alertUser(t, side + ' · run the checklist', false, m.key); pushQueue('⏱ ' + t, side + ' · run the checklist', 4, ['stopwatch']);
+    }
+    if (now >= m.queue && now < (m.start || m.queue) + 5 * 60000 && once(`${ev}:${m.key}:q`)) {
+      alertUser(`QUEUE NOW — ${lbl}`, side, true, m.key); pushQueue(`🚨 QUEUE NOW — ${lbl}`, side, 5, ['rotating_light']);
+    }
   }
   const st = m.nx?.status;
-  if (st && /now queuing|on deck/i.test(st) && once(`${ev}:${m.key}:nx:${st}`)) alertUser(`${st.toUpperCase()} — ${lbl}`, side, true, m.key);
+  if (st && /now queuing|on deck/i.test(st) && once(`${ev}:${m.key}:nx:${st}`)) {
+    alertUser(`${st.toUpperCase()} — ${lbl}`, side, true, m.key); pushQueue(`🚨 ${st.toUpperCase()} — ${lbl}`, side + ' (Nexus)', 5, ['rotating_light']);
+  }
 }
 let prevPlayed = null; const prevStart = {};
 function detectChanges() {
   const played = new Set(M.ours.filter(m => m.played).map(m => m.key));
   if (prevPlayed) for (const m of M.ours) if (m.played && !prevPlayed.has(m.key) && m.result) {
-    alertUser(`${m.label}: ${m.result === 'W' ? 'WIN' : m.result === 'L' ? 'LOSS' : 'TIE'} ${m.us}–${m.them}`, 'Battery to the charger · write the debrief', false, 'result');
+    const rt = `${m.label}: ${m.result === 'W' ? 'WIN' : m.result === 'L' ? 'LOSS' : 'TIE'} ${m.us}–${m.them}`;
+    alertUser(rt, 'Battery to the charger · write the debrief', false, 'result');
+    if (!S.demo) pushQueue(rt, 'Battery to the charger · write the debrief', 3, [m.result === 'W' ? 'trophy' : 'robot']);
   }
   prevPlayed = played;
   const n = M.next;
@@ -753,6 +774,57 @@ function detectChanges() {
 function toast(msg, kind) {
   const el = document.createElement('div'); el.className = 'toast ' + (kind || ''); el.textContent = msg;
   $('#toasts').appendChild(el); setTimeout(() => el.remove(), 6000);
+}
+
+/* ---------------- phone push alerts (ntfy) ---------------- */
+const rnd = () => Math.random().toString(36).slice(2, 8);
+const slug = x => String(x || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '').slice(0, 12);
+function ensureTopics() {
+  let changed = false;
+  if (!S.ntfyTeam) { S.ntfyTeam = `${S.team}pit-team-${rnd()}`; changed = true; }
+  if (!S.ntfyQueue) { S.ntfyQueue = `${S.team}pit-queue-${rnd()}`; changed = true; }
+  if (!S.ntfyMe) { S.ntfyMe = `${S.team}pit-${slug(S.member) || 'me'}-${rnd()}`; changed = true; }
+  if (S.ntfySend == null) { S.ntfySend = !!S.tv; changed = true; }
+  if (changed) saveSettings();
+}
+const appUrl = () => location.href.split('#')[0].split('?')[0];
+async function pushPhone(topic, title, message, opts = {}) {
+  if (!S.ntfyOn || !topic) return false;
+  const body = { topic, title, message: message || ' ', priority: opts.priority || 3, tags: opts.tags || [], click: appUrl() + '#matches' };
+  if (opts.actions) body.actions = opts.actions;
+  try {
+    const r = await fetch(String(S.ntfyServer || 'https://ntfy.sh').replace(/\/+$/, '') + '/', { method: 'POST', body: JSON.stringify(body) });
+    if (!r.ok) throw new Error(r.status);
+    return true;
+  } catch (e) { toast('Phone alert not sent (' + e.message + ')', 'bad'); return false; }
+}
+// queue alerts + results go out only from the sending device (the pit TV), so phones get one copy
+const pushQueue = (title, msg, prio, tags) => { if (S.ntfySend) pushPhone(S.ntfyQueue, title, msg, { priority: prio, tags }); };
+const SD_MEMBERS = () => SD.members || {};
+function topicFor(name) {
+  const m = Object.values(SD_MEMBERS()).find(x => norm(x.name) === norm(name));
+  return m && m.topic;
+}
+function ackAction(callId, name) {
+  try {
+    const cfg = parseFirebase(S.firebase);
+    const url = `https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/(default)/documents/teams/${S.team}/calls/${callId}?updateMask.fieldPaths=ack${cfg.apiKey ? '&key=' + cfg.apiKey : ''}`;
+    const body = JSON.stringify({ fields: { ack: { mapValue: { fields: { by: { stringValue: name }, t: { integerValue: String(Date.now()) } } } } } });
+    return { action: 'http', label: '🏃 On my way', url, method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body, clear: true };
+  } catch { return null; }
+}
+async function pushCall(id, to, reason, by) {
+  const everyone = to === '*';
+  const personal = !everyone && topicFor(to);
+  const topic = personal || S.ntfyTeam;
+  const title = `📣 ${everyone ? 'EVERYONE' : to.toUpperCase()} — BACK TO THE PIT NOW`;
+  const actions = [{ action: 'view', label: 'Open app', url: appUrl() + '#matches' }];
+  if (!everyone && Store.mode === 'cloud') { const a = ackAction(id, to); if (a) actions.unshift(a); }
+  return pushPhone(topic, title, `${reason ? reason + ' · ' : ''}called by ${by}`, { priority: 5, tags: ['rotating_light'], actions });
+}
+function registerMember() {
+  if (!S.member || !S.ntfyMe) return;
+  Store.put('members', slug(S.member) || 'me', { name: S.member, topic: S.ntfyMe, t: Date.now() }).catch(() => { });
 }
 
 /* ---------------- call to pit ---------------- */
@@ -821,6 +893,19 @@ $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeM
 const who = () => S.member || 'someone';
 const A = {
   'go': el => { location.hash = el.dataset.v; },
+  'ntfy-copy': async el => {
+    const v = S[el.dataset.k] || $(`[data-s="${el.dataset.k}"]`).value;
+    try { await navigator.clipboard.writeText(v); toast('Copied: ' + v, 'good'); } catch { toast(v); }
+  },
+  'ntfy-test': async () => {
+    readSettingsForm(false); ensureTopics();
+    const ok = await pushPhone(S.ntfyMe, '✅ 1577 Pit test', `Phone alerts work for ${S.member || 'this phone'}`, { priority: 4, tags: ['white_check_mark'] });
+    if (ok) toast('Test sent to your personal channel — check the ntfy app', 'good');
+  },
+  'ntfy-new': el => {
+    if (el.dataset.sure !== '1') { el.dataset.sure = '1'; el.textContent = 'Tap again — everyone must re-subscribe'; return; }
+    S.ntfyTeam = ''; S.ntfyQueue = ''; ensureTopics(); renderAll('nav'); toast('New team channels made — send the setup link again');
+  },
   'call-open': () => { unlockAudio(); callModal(); },
   'call-pick': el => { el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el)); $('#callName').value = ''; },
   'call-reason': el => { $('#callReason').value = el.dataset.r; },
@@ -829,8 +914,11 @@ const A = {
     const to = typed || picked;
     const id = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     once(`call:${id}`);
-    await Store.put('calls', id, { to, reason: $('#callReason').value.trim(), by: who(), t: Date.now(), ack: null, done: false });
+    const reason = $('#callReason').value.trim();
+    await Store.put('calls', id, { to, reason, by: who(), t: Date.now(), ack: null, done: false });
     closeModal(); toast(`📣 Called ${to === '*' ? 'everyone' : to} to the pit`, 'good');
+    const sent = await pushCall(id, to, reason, who());
+    if (sent && to !== '*' && !topicFor(to)) toast(`${to} has no personal channel yet — sent to the team channel`);
   },
   'call-ack': async el => { await Store.put('calls', el.dataset.id, { ack: { by: who(), t: Date.now() } }); $('#alertBar').hidden = true; toast('Sent: on my way 🏃', 'good'); },
   'call-clear': async el => { await Store.put('calls', el.dataset.id, { done: true }); callModal(); },
@@ -981,7 +1069,7 @@ function readSettingsForm(apply) {
   });
   S.eventKey = String(S.eventKey || '').toLowerCase();
   if (!apply) return;
-  saveSettings();
+  ensureTopics(); saveSettings(); registerMember();
   if (S.firebase !== fbBefore) { location.hash = 'matches'; location.reload(); return; }
   if (JSON.stringify([evKey(), S.team, S.tbaKey, S.nexusKey]) !== before) {
     D = emptyData(); curSrc = null; prevPlayed = null; subscribeShared(); refresh(true);
@@ -1033,8 +1121,10 @@ window.addEventListener('offline', renderTop);
 (async function boot() {
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
   route();
+  ensureTopics();
   await Store.init();
   subscribeShared();
+  registerMember();
   await refresh(true);
   setInterval(refresh, 20000);
   setInterval(tick, 1000); tick();

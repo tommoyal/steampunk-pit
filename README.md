@@ -13,6 +13,7 @@ The competition pit app for FRC Team 1577. It runs as a full-screen dashboard on
 - **Rankings:** our rank, record, ranking score, projected wins and the full table with EPA.
 - **Alerts:** a banner and sound X minutes before queueing, at queue time, on Nexus "Now queuing" or "On deck", and when a result posts. Phone notifications work while the app is open.
 - **Call to pit:** the 📣 button in the corner calls one member (or everyone) back to the pit. Their phone and the TV alarm until they tap "On my way". Needs team sync, and each member's name in Settings → Your name and Team members.
+- **Phone alerts (ntfy):** alerts that reach locked phones through the free ntfy app. Each member subscribes to the Team channel, the Queue channel if they're drive team or pit crew, and their personal channel (Settings → Phone alerts). Only the pit TV should have "This device sends queue alerts" turned on.
 - **Offline mode:** the app and the last event data are saved on the device and keep working without Wi-Fi.
 - **Demo mode:** a fake live event so you can try the app any time.
 
