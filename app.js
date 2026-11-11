@@ -1066,50 +1066,49 @@ window.addEventListener('resize', setTopH);
 /* ---------------- alerts: banner + sound + notifications ---------------- */
 let actx = null;
 function unlockAudio() {
+  // iPhone: "playback" makes sound play even when the ring/silent switch is on
+  try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch { }
   if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return; } }
   if (actx.state === 'suspended') actx.resume().then(renderTop).catch(() => { });
   renderTop();
 }
 document.addEventListener('pointerdown', unlockAudio);
-/* Harsh alarm: two detuned sawtooth+square voices (a grating, dissonant buzz)
-   driven through distortion and a limiter so it is as loud as the speaker allows. */
+document.addEventListener('touchend', unlockAudio);
+// iPhone pauses audio when the app goes to the background; wake it again when it comes back
+document.addEventListener('visibilitychange', () => { if (!document.hidden && actx && actx.state !== 'running') actx.resume().then(renderTop).catch(() => { }); });
+window.addEventListener('focus', () => { if (actx && actx.state !== 'running') actx.resume().then(renderTop).catch(() => { }); });
+/* Alarm: clean, loud "alarm-clock" beeps (square + sine, no distortion), through a limiter for volume. */
 let alarmOut = null;
 function alarmChain() {
   if (alarmOut) return alarmOut;
-  const shaper = actx.createWaveShaper(), curve = new Float32Array(1024);
-  for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = Math.tanh(x * 6); }
-  shaper.curve = curve;
   const comp = actx.createDynamicsCompressor();
-  comp.threshold.value = -6; comp.ratio.value = 20; comp.attack.value = 0.001; comp.release.value = 0.05;
-  const master = actx.createGain(); master.gain.value = 0.9;
-  shaper.connect(comp).connect(master).connect(actx.destination);
-  return (alarmOut = shaper);
+  comp.threshold.value = -12; comp.ratio.value = 8; comp.attack.value = 0.003; comp.release.value = 0.1;
+  const master = actx.createGain(); master.gain.value = 0.8;
+  comp.connect(master).connect(actx.destination);
+  return (alarmOut = comp);
 }
-function buzz(t, f, len, sweepTo) {
-  const out = alarmChain(), g = actx.createGain();
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.7, t + 0.005);
-  g.gain.setValueAtTime(0.7, t + len - 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
-  g.connect(out);
-  for (const [type, mul] of [['sawtooth', 1], ['square', 1.06], ['sawtooth', 2.02]]) {
-    const o = actx.createOscillator(); o.type = type;
-    o.frequency.setValueAtTime(f * mul, t);
-    if (sweepTo) o.frequency.linearRampToValueAtTime(sweepTo * mul, t + len);
-    o.connect(g); o.start(t); o.stop(t + len + 0.02);
+function tone(t, f, len) {
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t + 0.008);
+  g.gain.setValueAtTime(0.5, t + len - 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  g.connect(alarmChain());
+  for (const [type, vol] of [['square', 0.35], ['sine', 1]]) {
+    const o = actx.createOscillator(), v = actx.createGain(); o.type = type; o.frequency.value = f; v.gain.value = vol;
+    o.connect(v).connect(g); o.start(t); o.stop(t + len + 0.02);
   }
 }
-function beep(urgent) {
+async function beep(urgent) {
   vibrate(urgent);
-  if (!S.sound || !actx || actx.state !== 'running') return;
-  let t = actx.currentTime + 0.02;
+  if (!S.sound || !actx) return;
+  if (actx.state !== 'running') { try { await actx.resume(); } catch { } }
+  if (actx.state !== 'running') return;
+  let t = actx.currentTime + 0.03;
   if (urgent) {
-    // ~3.5 s: three rounds of rapid harsh pulses + a rising siren sweep
-    for (let r = 0; r < 3; r++) {
-      for (let i = 0; i < 4; i++) { buzz(t, 1400, 0.09); t += 0.12; }
-      buzz(t, 700, 0.55, 1600); t += 0.68;
-    }
+    // ~3 s: three groups of four quick beeps (classic alarm clock)
+    for (let r = 0; r < 3; r++) { for (let i = 0; i < 4; i++) { tone(t, 1050, 0.1); t += 0.15; } t += 0.4; }
   } else {
-    // ~1.3 s: two-tone harsh "eh-AH eh-AH"
-    for (let i = 0; i < 2; i++) { buzz(t, 620, 0.22); t += 0.27; buzz(t, 930, 0.3); t += 0.4; }
+    // ~1 s: rising two-note chime, twice
+    for (let i = 0; i < 2; i++) { tone(t, 784, 0.18); t += 0.22; tone(t, 1175, 0.26); t += 0.36; }
   }
 }
 /* Phone vibration (Android browsers; iPhone Safari does not allow websites to vibrate). */
@@ -1572,12 +1571,19 @@ async function onAuth(user) {
   Auth.user = user; Auth.profile = null;
   if (!user) { if (started) { location.reload(); return; } gate('signin'); return; }
   gate('loading');
+  // Offline-friendly: if this phone was already approved, open right away from the saved approval
+  const ok = LS.get('pit.approved', null);
+  if (ok && ok.uid === user.uid) {
+    Auth.profile = Auth.profile || { name: ok.name, status: 'approved', role: ok.role || 'member' };
+    gate('open'); renderAccount(); startApp();
+  }
   // who are the admins? (the config doc may not exist yet on a brand-new team)
   try { const c = await teamDoc('meta/config').get(); Auth.admins = c.exists ? (c.data().admins || []) : []; Auth.noAdmin = !c.exists; }
   catch { Auth.admins = []; Auth.noAdmin = false; }
   const ref = teamDoc('users/' + user.uid);
   Auth.unsubSelf = ref.onSnapshot(async snap => {
     if (!snap.exists) {
+      if (snap.metadata.fromCache) return; // offline and nothing saved yet: wait for the connection, don't create a new profile
       const name = Auth.pendingName || user.displayName || (user.email || 'member').split('@')[0];
       try { await ref.set({ name, email: user.email || '', status: 'pending', role: 'member', t: Date.now() }); } catch (e) { gateErr(e); }
       return;
@@ -1585,9 +1591,10 @@ async function onAuth(user) {
     const p = snap.data(); Auth.profile = p;
     if (isAdmin() && (p.status !== 'approved' || p.role !== 'admin')) { ref.set({ status: 'approved', role: 'admin' }, { merge: true }).catch(() => { }); return; }
     if (p.status === 'approved') {
+      LS.set('pit.approved', { uid: user.uid, name: p.name, role: p.role });
       if (S.member !== p.name) { S.member = p.name; saveSettings(); }
       gate('open'); renderAccount(); startApp();
-    } else if (p.status === 'declined') gate('declined');
+    } else if (p.status === 'declined') { LS.set('pit.approved', null); gate('declined'); }
     else gate('pending', Auth.noAdmin ? 'noadmin' : '');
   }, e => gateErr(e));
 }
