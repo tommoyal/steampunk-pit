@@ -574,12 +574,43 @@ function notices(M) {
   return out.join('');
 }
 function rankWindow(M, R) {
-  const rows = R.rows, i = rows.findIndex(r => r.team === M.T);
-  if (i < 0) return '';
-  let a = Math.max(0, i - 2), b = Math.min(rows.length, a + 5); a = Math.max(0, b - 5);
-  return `<div class="rwin">${rows.slice(a, b).map(r => `<div class="rw ${r.team === M.T ? 'us' : 'blur'}">
+  if (!R.rows.some(r => r.team === M.T)) return '';
+  return `<div class="rwin">${R.rows.map(r => `<div class="rw ${r.team === M.T ? 'us' : ''}">
     <span class="rr">#${r.rank}</span><span class="rt">${r.team}</span><span class="rn">${esc(D.teams[r.team] || '')}</span>
     <span class="rs">${Number(r.rs ?? 0).toFixed(R.rsPrec)}</span></div>`).join('')}</div>`;
+}
+/* scrolling ranking list: our team centered, fades by distance, springs back after release */
+let rwinHold = false, rwinUser = 0, rwinTimer = null, rwinSaved = null;
+const rwinBusy = () => rwinHold || Date.now() - rwinUser < 1500;
+function rwinFade(box) {
+  const c = box.getBoundingClientRect(), mid = c.top + c.height / 2;
+  box.querySelectorAll('.rw').forEach(el => {
+    const b = el.getBoundingClientRect(), d = Math.abs(b.top + b.height / 2 - mid) / (b.height + 3);
+    el.style.opacity = Math.max(0.15, 1 - d * 0.3).toFixed(2);
+  });
+}
+function rwinCenter(box, smooth) {
+  const us = box.querySelector('.rw.us'); if (!us) return;
+  const top = us.offsetTop - (box.clientHeight - us.offsetHeight) / 2;
+  if (Math.abs(box.scrollTop - top) > 1) box.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
+}
+function rwinSchedule(box) {
+  clearTimeout(rwinTimer);
+  rwinTimer = setTimeout(() => { if (!rwinHold) rwinCenter(box, true); }, 1200);
+}
+function initRwins() {
+  document.querySelectorAll('.rwin').forEach(box => {
+    if (box.dataset.init) return; box.dataset.init = '1';
+    if (rwinBusy() && rwinSaved != null) box.scrollTop = rwinSaved; else rwinCenter(box, false);
+    rwinFade(box);
+    box.addEventListener('scroll', () => { rwinSaved = box.scrollTop; rwinFade(box); rwinSchedule(box); }, { passive: true });
+    const down = () => { rwinHold = true; rwinUser = Date.now(); };
+    const up = () => { rwinHold = false; rwinUser = Date.now(); rwinSchedule(box); };
+    box.addEventListener('pointerdown', down); box.addEventListener('touchstart', down, { passive: true });
+    ['pointerup', 'pointercancel', 'touchend', 'touchcancel'].forEach(ev => box.addEventListener(ev, up, { passive: true }));
+    box.addEventListener('wheel', () => { rwinUser = Date.now(); }, { passive: true });
+    box.addEventListener('click', e => e.stopPropagation()); // scrolling the list doesn't open the rankings page
+  });
 }
 function rankCardHTML(M, tv) {
   const r = M.myRank, R = D.rankings;
@@ -856,6 +887,7 @@ function renderAll(force) {
   else if (current !== 'settings' || force === 'nav') $('#view').innerHTML = (S.tv && current !== 'matches' ? '<a class="btn primary backtv" href="#matches">← Back to TV</a>' : '') + (VIEWS[current] || viewMatches)(M);
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === current));
   const np = $('#navPlayoffs'); if (np) np.hidden = !M.P;
+  initRwins();
 }
 function applyMode() {
   document.body.classList.toggle('tv', !!S.tv && current === 'matches');

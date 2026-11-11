@@ -241,17 +241,19 @@ body.tv .tvbtn:active{transform:scale(.98)}
 .mdscore{font-family:var(--num);font-size:28px;font-weight:700} .mdscore.won{color:var(--green)}
 .mdal table.rank td{padding:4px 6px;border-bottom-color:rgba(255,255,255,.06)}
 
-/* ranking window: 5 teams around us, others blurred */
-.rwin{display:flex;flex-direction:column;gap:3px;margin-top:8px}
-.rw{display:grid;grid-template-columns:44px 58px 1fr auto;align-items:center;gap:6px;padding:3px 8px;border-radius:8px;background:var(--panel2)}
+/* ranking list: scrolls, our team centered, rows fade with distance */
+:root{--rh:30px} body.tv{--rh:34px}
+.rwin{position:relative;height:calc(var(--rh) * 4.5 + 12px);overflow-y:auto;scroll-snap-type:y mandatory;margin-top:8px;
+  padding:calc((var(--rh) * 4.5 + 12px - var(--rh)) / 2) 0;box-sizing:border-box;scrollbar-width:none;overscroll-behavior:contain;cursor:grab}
+.rwin::-webkit-scrollbar{display:none}
+.rw{height:var(--rh);margin-bottom:3px;scroll-snap-align:center;display:grid;grid-template-columns:44px 58px 1fr auto;align-items:center;gap:6px;padding:0 8px;border-radius:8px;background:var(--panel2);transition:opacity .1s}
 .rw .rr{font-family:var(--num);font-weight:700;color:var(--muted)}
 .rw .rt{font-family:var(--num);font-weight:700;font-size:17px}
 .rw .rn{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rw .rs{font-family:var(--num);font-size:15px}
-.rw.blur{filter:blur(0.6px);opacity:.7}
-.rw.us{background:rgba(212,162,76,.2);outline:2px solid var(--brass);transform:scale(1.02)}
+.rw.us{background:rgba(212,162,76,.22);box-shadow:inset 0 0 0 2px var(--brass)}
 .rw.us .rr,.rw.us .rt{color:var(--brass2)}
-body.tv .rw{padding:2px 8px} body.tv .rw .rt{font-size:20px} body.tv .rw.us .rt{font-size:24px}
+body.tv .rw .rt{font-size:20px} body.tv .rw.us .rt{font-size:22px}
 
 /* clock with date + seconds */
 .clock{display:flex;align-items:baseline;gap:8px;min-width:0;white-space:nowrap}
