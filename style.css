@@ -131,7 +131,7 @@ h2{font-size:22px} h3{font-size:18px;color:var(--brass)}
 .ready{font-family:var(--num);font-size:30px;font-weight:700;color:var(--green);text-align:center;padding:6px;border:2px solid var(--green);border-radius:12px;margin-bottom:10px}
 .bigbumper{font-family:var(--num);font-size:26px;font-weight:700;text-align:center;border-radius:12px;padding:8px;margin-bottom:12px;color:#fff}
 .bigbumper.red{background:var(--red)} .bigbumper.blue{background:var(--blue)}
-select,input[type=text],input[type=number],input[type=password],textarea{width:100%;background:#120f0c;border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+select,input[type=text],input[type=search],input[type=number],input[type=password],textarea{width:100%;background:#120f0c;border:1px solid var(--line);border-radius:10px;padding:9px 11px}
 textarea{min-height:80px;resize:vertical}
 label.f{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.06em}
 .seg{display:flex;gap:6px;flex-wrap:wrap}
@@ -299,3 +299,29 @@ body.tv .poline{font-size:16px}
 
 .elimtag{font-size:9px;font-weight:700;background:var(--red);color:#fff;border-radius:4px;padding:1px 4px;align-self:center}
 @media (min-width:960px){ body.wideview:not(.tv) #stage{grid-template-columns:minmax(0,.75fr) minmax(0,1.6fr)} }
+
+/* event stage chip */
+.stage{font-size:11px;font-weight:700;letter-spacing:.08em;border-radius:6px;padding:2px 7px;margin-right:8px;background:var(--panel2);border:1px solid var(--line);color:var(--brass2);vertical-align:2px}
+.stage.st-selection{background:var(--amber);color:#000;border-color:var(--amber)} .stage.st-playoffs{background:var(--red);color:#fff;border-color:var(--red)}
+.stage.st-done{background:var(--green);color:#06150e;border-color:var(--green)}
+body.tv .stage{font-size:14px}
+@media (max-width:640px){ .stage{display:none} }
+
+/* alliance selection board */
+table.sel td{padding:5px 6px} table.sel td b{font-family:var(--num);font-size:17px}
+table.sel td.usc b{color:var(--brass2)} table.sel td.picking{background:rgba(240,180,41,.18);color:var(--amber);animation:pulse 1s infinite alternate}
+.bavail{display:flex;flex-wrap:wrap;gap:6px}
+.bav{display:inline-flex;flex-direction:column;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:3px 9px;min-width:64px}
+.bav b{font-family:var(--num);font-size:18px} .bav small{font-size:10px;color:var(--muted)} .bav.us{border-color:var(--brass)}
+body.tv .selboard{flex:1;overflow:hidden} body.tv table.sel td b{font-size:22px}
+
+/* pit finder */
+.plist{display:flex;flex-direction:column;gap:5px}
+.prow{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);cursor:pointer}
+.prow:hover{border-color:var(--brass)} .prow.us{border-color:var(--brass);background:rgba(212,162,76,.12)}
+.ppit{font-family:var(--num);font-weight:700;font-size:17px;min-width:44px;text-align:center;border-radius:7px;padding:1px 6px;background:var(--copper);color:#fff}
+.ppit.none{background:transparent;border:1px dashed var(--line);color:var(--muted)} .ppit.big{font-size:20px;padding:3px 10px}
+.ppit.sm{font-size:12px;min-width:0;padding:0 5px}
+.tag{font-size:11px;font-weight:700;border-radius:999px;padding:1px 8px;text-transform:uppercase}
+.tag.partner{background:rgba(63,178,127,.2);color:var(--green)} .tag.opponent{background:rgba(229,72,77,.2);color:#ff9a9d}
+.pitmap{width:100%;margin-top:10px;border-radius:10px;cursor:zoom-in}

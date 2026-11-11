@@ -51,7 +51,7 @@ const shortLabel = l => String(l || '').replace('Qualification ', 'Q').replace('
 const pct = p => `${Math.round(p * 100)}%`;
 
 /* ---------------- event data (cached per device for offline) ---------------- */
-const emptyData = () => ({ eventKey: evKey(), event: null, teams: {}, matches: [], rankings: null, alliances: null, nexus: null, sb: { matches: {}, teams: {} }, updated: {}, errors: {} });
+const emptyData = () => ({ eventKey: evKey(), event: null, teams: {}, matches: [], rankings: null, alliances: null, pits: null, nexus: null, sb: { matches: {}, teams: {} }, updated: {}, errors: {} });
 let D = LS.get('pit.cache', null);
 if (!D || D.eventKey !== evKey()) D = emptyData();
 const saveCache = () => { if (!S.demo) LS.set('pit.cache', D); };
@@ -145,6 +145,16 @@ async function refreshNexus() {
       announcements: n.announcements || []
     };
     D.updated.nexus = Date.now(); delete D.errors.nexus;
+    if (!D.pitsTried || Date.now() - D.pitsTried > 10 * 60000) {
+      D.pitsTried = Date.now();
+      try {
+        const pits = await getJSON(`https://frc.nexus/api/v1/event/${evKey()}/pits`, { 'Nexus-Api-Key': S.nexusKey.trim() });
+        const out = {};
+        if (Array.isArray(pits)) pits.forEach(x => { const tm = +(x.team || x.teamNumber); const a = x.pit || x.address || x.pitAddress; if (tm && a) out[tm] = String(a); });
+        else if (pits && typeof pits === 'object') Object.entries(pits).forEach(([k, v]) => { const tm = +k; if (tm && v) out[tm] = String(typeof v === 'object' ? (v.address || v.pit || '') : v); });
+        if (Object.keys(out).length) D.pits = out;
+      } catch { /* this event has no Nexus pit map */ }
+    }
   } catch (e) { D.errors.nexus = `Nexus: ${e.message}`; }
 }
 async function refreshSB() {
@@ -164,10 +174,10 @@ function rng(seed) { return () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.i
 const DEMO_TEAMS = [1577, 1690, 2231, 1574, 3339, 4590, 5654, 1937, 2630, 3075, 4338, 1942, 5990, 6738, 7039, 4744, 3083, 2212, 5951, 8175, 6230, 1943, 3211, 4661];
 function demoData() {
   const t = Date.now();
-  const po = S.demoPhase === 'playoffs';
+  const po = S.demoPhase === 'playoffs', sel = S.demoPhase === 'selection';
   let base = LS.get('pit.demoBase', 0);
   if (!base || t - base > 6 * 3600e3 || base > t) { base = t - 50 * 60000; LS.set('pit.demoBase', base); }
-  if (po) base = t - (54 * 7 + 90) * 60000; // all quals done
+  if (po || sel) base = t - (54 * 7 + 90) * 60000; // all quals done
   const r = rng(1577), others = DEMO_TEAMS.filter(x => x !== 1577), gap = 7 * 60000;
   const matches = [], sbm = {};
   for (let i = 1; i <= 54; i++) {
@@ -196,13 +206,24 @@ function demoData() {
     .sort((x, y) => y.rs - x.rs || y.extra - x.extra).map((x, i) => ({ ...x, rank: i + 1 }));
   const epaT = n => Math.round(20 + rng(n)() * 50);
   let alliances = null;
-  if (po) {
+  if (po || sel) {
     // alliance selection: top 8 are captains, serpentine draft (1→8, then 8→1)
     const avail = rows.map(r => r.team), caps = avail.splice(0, 8), al = caps.map(c => [c]);
     for (let i = 0; i < 8; i++) al[i].push(avail.shift());
     for (let i = 7; i >= 0; i--) al[i].push(avail.shift());
     if (!al.some(a => a.includes(1577))) al[3][1] = 1577;
     alliances = al.map((teams, i) => ({ num: i + 1, name: `Alliance ${i + 1}`, teams, status: null }));
+    if (sel) {
+      // reveal the draft live: one pick every 15 s (captain + 1st pick down the list, then 2nd picks back up)
+      let sb = LS.get('pit.demoSBase', 0);
+      if (!sb || t - sb > 12 * 60000 || sb > t) { sb = t - 40000; LS.set('pit.demoSBase', sb); }
+      const seq = []; for (let i = 0; i < 8; i++) seq.push([i, 0], [i, 1]); for (let i = 7; i >= 0; i--) seq.push([i, 2]);
+      const shown = Math.min(seq.length, 1 + Math.floor((t - sb) / 15000));
+      const vis = al.map(() => []); seq.slice(0, shown).forEach(([i, k]) => { vis[i][k] = al[i][k]; });
+      alliances = vis.filter(v => v.length).map((v, i) => ({ num: i + 1, name: `Alliance ${i + 1}`, teams: v.filter(Boolean), status: null }));
+    }
+  }
+  if (po) {
     let pb = LS.get('pit.demoPBase', 0);
     if (!pb || t - pb > 3 * 3600e3 || pb > t) { pb = t - 38 * 60000; LS.set('pit.demoPBase', pb); }
     const aEPA = a => alliances[a - 1].teams.slice(0, 3).reduce((x, n) => x + epaT(n), 0);
@@ -241,6 +262,7 @@ function demoData() {
     eventKey: 'demo', event: { key: 'demo', name: 'DEMO Steampunk Test Event', webcasts: [{ type: 'twitch', channel: 'firstinspires' }] },
     teams: { 1577: 'Steampunk' }, matches, alliances, rankings: { rsName: 'Ranking Score', rsPrec: 2, extraName: 'Total RP', rows },
     nexus: { matches: nx }, sb: { matches: sbm, teams: Object.fromEntries(DEMO_TEAMS.map(n => [n, { epa: epaT(n) }])) },
+    pits: Object.fromEntries(DEMO_TEAMS.map((n, i) => [n, `${'ABC'[i % 3]}${Math.floor(i / 3) + 1}`])),
     updated: { tba: t, nexus: t, sb: t }, errors: {}
   };
 }
@@ -311,6 +333,17 @@ function buildPlayoffs(Mo) {
 const eName = e => e ? (e.n === 'F' ? 'Finals' : `M${e.n}`) : '';
 const sideLbl = (e, i) => { const a = i ? e.ba : e.ra; return a ? `A${a}` : e.feeds[i]; };
 
+/* ---------------- event stage ---------------- */
+function eventStage(Mo) {
+  if (Mo.P?.E.F.champ) return 'done';
+  if (Mo.P?.started) return 'playoffs';
+  const q = Mo.all.filter(m => m.level === 'qm');
+  if (D.alliances || (q.length && q.every(m => m.played))) return 'selection';
+  if (q.length) return 'quals';
+  return 'pre';
+}
+const STAGE_LBL = { pre: 'BEFORE QUALS', quals: 'QUALIFICATIONS', selection: 'ALLIANCE SELECTION', playoffs: 'PLAYOFFS', done: 'EVENT COMPLETE' };
+
 /* ---------------- model: our matches, next match, timing ---------------- */
 const teamsKey = (r, b) => { const a = [...r, ...b].filter(Boolean); return a.length === 6 ? a.slice().sort((x, y) => x - y).join(',') : ''; };
 function sameLabel(m, label) {
@@ -364,6 +397,7 @@ function buildModel() {
   const expWins = remainingQ.length && remainingQ.every(m => m.winProb != null) ? remainingQ.reduce((s, m) => s + m.winProb, 0) : null;
   const Mo = { all, ours, next, last, delay, T, myRank, remainingQ, expWins };
   Mo.P = buildPlayoffs(Mo);
+  Mo.stage = eventStage(Mo);
   return Mo;
 }
 
@@ -415,7 +449,7 @@ const Store = {
 window.addEventListener('storage', e => {
   if (e.key && e.key.startsWith('pit.store.')) (Store.localSubs[e.key.slice(10)] || []).forEach(f => f());
 });
-const SD = { batteries: {}, check: {}, debrief: {}, calls: {}, members: {} };
+const SD = { batteries: {}, check: {}, debrief: {}, calls: {}, members: {}, pits: {}, pitmap: null };
 let unsubs = [];
 function subscribeShared() {
   unsubs.forEach(u => { try { u && u(); } catch { } }); unsubs = [];
@@ -425,6 +459,8 @@ function subscribeShared() {
   unsubs.push(Store.watch('members', o => { SD.members = o; }));
   unsubs.push(Store.watch('check_' + ev, o => { SD.check = o; renderAll(); }));
   unsubs.push(Store.watch('debrief_' + ev, o => { SD.debrief = o; renderAll(); }));
+  unsubs.push(Store.watch('pits_' + ev, o => { SD.pits = o; if (current !== 'pits') renderAll(); else renderPitResults(); }));
+  unsubs.push(Store.watch('pitmap_' + ev, o => { SD.pitmap = o.map?.map || null; if (current === 'pits') renderAll('nav'); }));
 }
 const colCheck = () => 'check_' + (evKey() || 'none');
 const colDebrief = () => 'debrief_' + (evKey() || 'none');
@@ -502,7 +538,7 @@ function renderStream() {
 }
 
 /* ---------------- rendering helpers ---------------- */
-function teamTag(n, T) { return `<span class="tt ${n === T ? 'us' : ''}"><b>${n || '?'}</b><small>${esc(D.teams[n] || '')}</small></span>`; }
+function teamTag(n, T) { const p = pitOf(n); return `<span class="tt ${n === T ? 'us' : ''}"><b>${n || '?'}</b><small>${esc(D.teams[n] || '')}${p && n !== T ? ` · 📍${esc(p)}` : ''}</small></span>`; }
 function queueState(m) {
   const now = Date.now(), st = m.nx?.status || '';
   if (/now queuing|on deck|on field/i.test(st)) return `<div class="qstate hot">${esc(st.toUpperCase())}</div>`;
@@ -625,7 +661,7 @@ function rankCardHTML(M, tv) {
 
 /* ---------------- views (phone / laptop) ---------------- */
 function viewMatches(M) {
-  return `${notices(M)}${nextCard(M)}
+  return `${notices(M)}${M.stage === 'selection' ? selectionBoard(M, false) : M.stage === 'done' && !M.next ? eventSummary(M) : nextCard(M)}
     <div class="row" style="margin:14px 0 8px"><h3 style="margin:0">Our matches</h3><span class="sp"></span><span class="muted small">${M.ours.filter(m => m.played).length}/${M.ours.length} played</span></div>
     <div class="mlist">${M.ours.map(m => matchRow(m, M)).join('') || '<div class="card muted">No matches for team ' + M.T + ' yet.</div>'}</div>
     <div class="muted small" style="margin-top:10px">Updated ${hm(D.updated?.tba)}${D.updated?.nexus ? ' · Nexus ' + hm(D.updated.nexus) : ''}</div>`;
@@ -729,7 +765,42 @@ function playoffStatusHTML(P, tv) {
     ${nx ? `<div class="tvsub">Next: <b>${eName(nx)}</b> vs ${esc(opp)}${nx.m ? ' · ~' + hm(nx.m.start) : ''}</div>` : ''}
     ${st.path ? `<div class="tvsub">Win → ${st.path.win ? eName(st.path.win) : '—'} · Lose → ${st.path.lose ? eName(st.path.lose) : '<b class="bad">OUT</b>'}</div>` : ''}`;
 }
+function selectionBoard(M, tv) {
+  const T = M.T, A = D.alliances || [], R = D.rankings?.rows || [];
+  const picked = new Set(A.flatMap(a => a.teams));
+  const epa = n => D.sb.teams[n]?.epa;
+  const myRank = R.find(r => r.team === T)?.rank;
+  const mine = A.find(a => a.teams.includes(T));
+  let status;
+  if (mine) { const i = mine.teams.indexOf(T); status = `<span class="ok">We're on Alliance ${mine.num} — ${['captain', '1st pick', '2nd pick', '3rd pick', 'backup'][i] || 'pick'}</span>`; }
+  else if (myRank && myRank <= 8) status = `<span class="warn">We're ranked #${myRank} — a captain spot is likely</span>`;
+  else status = `<span>We're available${myRank ? ` (ranked #${myRank})` : ''} — waiting to be picked</span>`;
+  // current slot = first empty slot in serpentine order
+  const seq = []; for (let i = 1; i <= 8; i++) seq.push([i, 0], [i, 1]); for (let i = 8; i >= 1; i--) seq.push([i, 2]);
+  const cur = seq.find(([n, k]) => !(A.find(a => a.num === n)?.teams[k]));
+  const rows = Array.from({ length: 8 }, (_, i) => {
+    const a = A.find(x => x.num === i + 1) || { num: i + 1, teams: [] };
+    const cell = k => { const tm = a.teams[k], now = cur && cur[0] === a.num && cur[1] === k;
+      return `<td class="${tm === T ? 'usc' : ''} ${now ? 'picking' : ''}">${tm ? `<b>${tm}</b>` : now ? 'picking…' : '<span class="muted">—</span>'}</td>`; };
+    const sum = a.teams.slice(0, 3).map(epa); const se = a.teams.length && sum.every(x => x != null) ? sum.reduce((x, y) => x + y, 0).toFixed(0) : '';
+    return `<tr class="${a.teams.includes(T) ? 'us' : ''}"><td class="n">A${a.num}</td>${cell(0)}${cell(1)}${cell(2)}<td class="muted">${se}</td></tr>`;
+  }).join('');
+  const pool = (R.length ? R.map(r => r.team) : Object.keys(D.teams).map(Number)).filter(n => !picked.has(n));
+  const best = pool.map(n => ({ n, e: epa(n), r: R.find(r => r.team === n)?.rank })).sort((a, b) => (b.e ?? -1) - (a.e ?? -1) || (a.r ?? 99) - (b.r ?? 99)).slice(0, tv ? 6 : 10);
+  return `<div class="card selboard"><div class="row"><h3 style="margin:0">Alliance selection</h3><span class="sp"></span><span class="muted small">${A.length ? 'live from TBA' : 'waiting for picks'}</span></div>
+    <div class="postate">${status}</div>
+    <table class="rank sel"><thead><tr><th></th><th>Captain</th><th>Pick 1</th><th>Pick 2</th><th>EPA</th></tr></thead><tbody>${rows}</tbody></table>
+    <h3 style="margin-top:10px">Best available</h3>
+    <div class="bavail">${best.map(b => `<span class="bav ${b.n === T ? 'us' : ''}"><b>${b.n}</b>${b.r ? `<small>#${b.r}</small>` : ''}${b.e != null ? `<small>EPA ${Number(b.e).toFixed(0)}</small>` : ''}</span>`).join('') || '<span class="muted">—</span>'}</div></div>`;
+}
+function eventSummary(M) {
+  const r = M.myRank, P = M.P, st = P?.st;
+  return `<div class="card next-card none"><div class="nc-kicker">Event complete</div><div class="nc-label">${st?.state === 'won' ? '🏆 Champions!' : 'Thanks for a great event'}</div>
+    <div class="nc-foot">${r ? `<span>Final rank <b>#${r.rank}</b></span><span>Quals <b>${r.w}-${r.l}-${r.t}</b></span>` : ''}
+    ${P?.our ? `<span>Alliance <b>${P.our.num}</b></span><span>Playoffs <b>${esc(st.text)}</b> (${st.record})</span>` : '<span>Not on a playoff alliance</span>'}</div></div>`;
+}
 function viewPlayoffs(M) {
+  if (M.stage === 'selection') return `${notices(M)}${selectionBoard(M, false)}`;
   const P = M.P;
   if (!P) return `${notices(M)}<div class="card"><h2>Playoffs</h2><div class="muted">Alliances appear here after alliance selection.</div></div>`;
   const col = (title, ns) => `<div class="bcol"><div class="bct">${title}</div>${ns.map(n => bracketBox(P.E[n], P)).join('')}</div>`;
@@ -743,6 +814,40 @@ function viewPlayoffs(M) {
       ${P.A.map(a => `<tr class="${a === P.our ? 'us' : ''}"><td class="n">${a.num}</td><td><b class="n">${a.teams[0]}</b> <span class="muted small">${esc(D.teams[a.teams[0]] || '')}</span></td>
         <td>${a.teams.slice(1).join(', ')}</td><td>${epa(a)}</td><td>${P.E.F.champ === a.num ? '🏆' : alive(a) ? '' : '<span class="muted small">out</span>'}</td></tr>`).join('')}
     </tbody></table></div>`;
+}
+const pitOf = n => SD.pits[String(n)]?.pit || D.pits?.[n] || null;
+let pitQuery = '';
+function pitTeams() {
+  const set = new Set([...Object.keys(D.teams).map(Number), ...(D.rankings?.rows || []).map(r => r.team), ...Object.keys(D.pits || {}).map(Number), ...Object.keys(SD.pits).map(Number)]);
+  return [...set].filter(Boolean).sort((a, b) => a - b);
+}
+function pitRow(n, M) {
+  const r = D.rankings?.rows.find(x => x.team === n), p = pitOf(n);
+  const nm = M.all.find(m => !m.played && (m.red.includes(n) || m.blue.includes(n)));
+  return `<div class="prow ${n === M.T ? 'us' : ''}" data-act="pit-edit" data-n="${n}">
+    <span class="ppit ${p ? '' : 'none'}">${p ? esc(p) : '?'}</span>
+    <span><b class="n">${n}</b> <span class="muted small">${esc(D.teams[n] || '')}</span>${r ? `<span class="muted small"> · #${r.rank}</span>` : ''}</span>
+    <span class="sp"></span><span class="muted small">${nm ? `next ${esc(shortLabel(nm.label))} ${hm(nm.start)}` : ''}</span></div>`;
+}
+function renderPitResults() {
+  const box = $('#pitResults'); if (!box || !M) return;
+  const q = pitQuery.trim().toLowerCase();
+  const list = pitTeams().filter(n => !q || String(n).includes(q) || (D.teams[n] || '').toLowerCase().includes(q) || (pitOf(n) || '').toLowerCase() === q);
+  box.innerHTML = list.map(n => pitRow(n, M)).join('') || '<div class="muted">No teams found.</div>';
+}
+function viewPits(M) {
+  const nx = M.next, ourPit = pitOf(M.T);
+  const visit = nx ? [...nx.allies.filter(n => n !== M.T).map(n => [n, 'partner']), ...nx.opps.map(n => [n, 'opponent'])] : [];
+  setTimeout(renderPitResults, 0);
+  return `<div class="card"><div class="row"><h2 style="margin:0">Pit finder</h2><span class="sp"></span>${ourPit ? `<span class="ppit big">Our pit ${esc(ourPit)}</span>` : ''}</div>
+      <input type="search" id="pitSearch" placeholder="Team number, name or pit…" value="${esc(pitQuery)}" style="margin-top:10px" autocomplete="off">
+      <div class="muted small" style="margin-top:6px">Pits come from the event's Nexus pit map when it has one. Tap any team to set or fix its pit — it's shared with the whole team.</div></div>
+    ${visit.length ? `<div class="card"><h3>Visit before ${esc(nx.label)}</h3>${visit.map(([n, role]) => `<div class="prow" data-act="pit-edit" data-n="${n}"><span class="ppit ${pitOf(n) ? '' : 'none'}">${esc(pitOf(n) || '?')}</span>
+      <span><b class="n">${n}</b> <span class="muted small">${esc(D.teams[n] || '')}</span></span><span class="sp"></span><span class="tag ${role}">${role}</span></div>`).join('')}</div>` : ''}
+    <div class="card"><div class="row"><h3 style="margin:0">Pit map</h3><span class="sp"></span>
+      <label class="btn small" style="cursor:pointer">📷 ${SD.pitmap ? 'Replace' : 'Add'} photo<input type="file" accept="image/*" id="pitMapFile" hidden></label></div>
+      ${SD.pitmap ? `<img src="${SD.pitmap}" class="pitmap" data-act="pitmap-zoom" alt="Pit map">` : '<div class="muted small" style="margin-top:6px">Take a photo of the printed pit map from Pit Admin — everyone on the team will see it here.</div>'}</div>
+    <div class="card"><h3>All teams</h3><div id="pitResults" class="plist"></div></div>`;
 }
 function viewSettings() {
   const f = (k, label, type = 'text', extra = '') => `<label class="f">${label}</label><input type="${type}" data-s="${k}" value="${esc(S[k])}" ${extra}>`;
@@ -758,7 +863,7 @@ function viewSettings() {
     <div class="muted small" style="margin-top:6px">Alerts fire while the app is open (on a phone, keep it open or added to the home screen).</div></div>
   <div class="card"><h3>Event</h3>
     ${cb('demo', '<b>Demo mode</b> (fake live event for testing)')}
-    <label class="f">Demo phase</label><select data-s="demoPhase"><option value="quals" ${S.demoPhase !== 'playoffs' ? 'selected' : ''}>Qualifications</option><option value="playoffs" ${S.demoPhase === 'playoffs' ? 'selected' : ''}>Alliance selection & playoffs</option></select>
+    <label class="f">Demo phase</label><select data-s="demoPhase"><option value="quals" ${!['playoffs', 'selection'].includes(S.demoPhase) ? 'selected' : ''}>Qualifications</option><option value="selection" ${S.demoPhase === 'selection' ? 'selected' : ''}>Alliance selection (live draft)</option><option value="playoffs" ${S.demoPhase === 'playoffs' ? 'selected' : ''}>Playoffs</option></select>
     <div class="row"><div style="flex:1">${f('team', 'Team number', 'number')}</div><div style="flex:1">${f('year', 'Season', 'number')}</div></div>
     ${f('eventKey', 'Event key (e.g. 2027isde1)', 'text', 'placeholder="2027isde1"')}
     <div class="row" style="margin-top:8px"><button class="btn small" data-act="find-events">Find our events</button><span id="evFind" class="muted small"></span></div>
@@ -805,7 +910,7 @@ function matchDetail(key) {
   const rk = n => R?.rows.find(r => r.team === n);
   const epa = n => D.sb.teams[n]?.epa;
   const sbm = D.sb.matches[m.key] || {};
-  const teamRow = (n, side) => { const r = rk(n); return `<tr class="${n === T ? 'us' : ''}"><td class="n"><b>${n}</b></td><td class="small">${esc(D.teams[n] || '')}</td>
+  const teamRow = (n, side) => { const r = rk(n); return `<tr class="${n === T ? 'us' : ''}"><td class="n"><b>${n}</b></td><td class="small">${esc(D.teams[n] || '')}${pitOf(n) ? ` <span class="ppit sm">${esc(pitOf(n))}</span>` : ''}</td>
     <td>${r ? '#' + r.rank : '—'}</td><td>${r ? `${r.w}-${r.l}-${r.t}` : '—'}</td><td>${epa(n) != null ? Number(epa(n)).toFixed(1) : '—'}</td></tr>`; };
   const sumEPA = list => { const v = list.map(epa); return v.every(x => x != null) ? v.reduce((a, b) => a + b, 0).toFixed(0) : null; };
   const allianceBox = side => {
@@ -852,13 +957,14 @@ function matchDetail(key) {
 function renderTV(M) {
   const i = M.next ? M.ours.indexOf(M.next) : M.ours.length;
   const rows = M.ours.slice(Math.max(0, i - 2));
-  $('#tvSide').innerHTML = `<div class="tvbtn" data-act="go" data-v="checklist" title="Open checklist">${nextCard(M)}</div><div class="card tvlist"><h3>Our matches</h3><div class="mlist">${rows.map(m => matchRow(m, M)).join('') || '<div class="muted">No matches yet.</div>'}</div></div>`;
+  if (M.stage === 'selection') { $('#tvSide').innerHTML = selectionBoard(M, true); }
+  else $('#tvSide').innerHTML = `<div class="tvbtn" data-act="go" data-v="checklist" title="Open checklist">${M.stage === 'done' && !M.next ? eventSummary(M) : nextCard(M)}</div><div class="card tvlist"><h3>Our matches</h3><div class="mlist">${rows.map(m => matchRow(m, M)).join('') || '<div class="muted">No matches yet.</div>'}</div></div>`;
   const ck = M.next ? checkProgress(M.next) : null;
   const bl = battList().filter(b => b.status !== 'retired');
   const now = Date.now(), l = M.last;
   const errs = Object.entries(D.errors || {}).filter(([k]) => k !== 'sb').map(([, e]) => e);
   $('#tvStrip').innerHTML = `
-    ${M.P ? `<div class="card tvbtn" data-act="go" data-v="playoffs" title="Open playoffs"><h3>Playoffs</h3>${playoffStatusHTML(M.P, true)}</div>`
+    ${M.P && M.stage !== 'selection' ? `<div class="card tvbtn" data-act="go" data-v="playoffs" title="Open playoffs"><h3>Playoffs</h3>${playoffStatusHTML(M.P, true)}</div>`
       : `<div class="card tvbtn" data-act="go" data-v="rankings" title="Open rankings">${rankCardHTML(M, true)}</div>`}
     <div class="card tvbtn" data-act="go" data-v="checklist" title="Open checklist"><h3>Robot ${M.next ? '· ' + esc(shortLabel(M.next.label)) : ''}</h3>
       ${ck ? (ck.done ? '<div class="tvbig ok">READY ✓</div>' : `<div class="tvbig ${ck.n ? 'warn' : ''}">${ck.n}/${ck.total}</div><div class="tvsub">checklist done</div>`) : '<div class="tvsub">No upcoming match</div>'}
@@ -872,21 +978,21 @@ function renderTV(M) {
 /* ---------------- top bar / router ---------------- */
 function renderTop() {
   const name = D.event?.name || (evKey() ? evKey() : 'No event selected');
-  $('#evname').innerHTML = `${S.demo ? '<span class="demo">DEMO</span>' : ''}${esc(name)}`;
+  $('#evname').innerHTML = `${S.demo ? '<span class="demo">DEMO</span>' : ''}${M ? `<span class="stage st-${M.stage}">${STAGE_LBL[M.stage]}</span>` : ''}${esc(name)}`;
   const chip = $('#syncChip');
   chip.textContent = !navigator.onLine ? '● offline' : Store.mode === 'cloud' ? '● team sync' : '○ this device';
   chip.className = 'sync' + (!navigator.onLine ? ' off' : '');
   $('#soundChip').hidden = !(S.sound && (!actx || actx.state !== 'running'));
 }
 let current = 'matches', M = null;
-const VIEWS = { playoffs: viewPlayoffs, matches: viewMatches, checklist: viewChecklist, batteries: viewBatteries, debrief: viewDebrief, rankings: viewRankings, settings: viewSettings };
+const VIEWS = { pits: viewPits, playoffs: viewPlayoffs, matches: viewMatches, checklist: viewChecklist, batteries: viewBatteries, debrief: viewDebrief, rankings: viewRankings, settings: viewSettings };
 function renderAll(force) {
   M = buildModel();
   renderTop(); renderStream();
   if (document.body.classList.contains('tv')) renderTV(M);
-  else if (current !== 'settings' || force === 'nav') $('#view').innerHTML = (S.tv && current !== 'matches' ? '<a class="btn primary backtv" href="#matches">← Back to TV</a>' : '') + (VIEWS[current] || viewMatches)(M);
+  else if ((current !== 'settings' && !(current === 'pits' && document.activeElement?.id === 'pitSearch')) || force === 'nav') $('#view').innerHTML = (S.tv && current !== 'matches' ? '<a class="btn primary backtv" href="#matches">← Back to TV</a>' : '') + (VIEWS[current] || viewMatches)(M);
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.v === current));
-  const np = $('#navPlayoffs'); if (np) np.hidden = !M.P;
+  const np = $('#navPlayoffs'); if (np) np.hidden = !['selection', 'playoffs', 'done'].includes(M.stage);
   initRwins();
 }
 function applyMode() {
@@ -1098,6 +1204,18 @@ $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeM
 const who = () => S.member || 'someone';
 const A = {
   'go': el => { location.hash = el.dataset.v; },
+  'pit-edit': el => {
+    const n = +el.dataset.n, cur = pitOf(n) || '';
+    openModal(`<h2>Team ${n} pit</h2><div class="muted small">${esc(D.teams[n] || '')}${D.pits?.[n] ? ` · Nexus says ${esc(D.pits[n])}` : ''}</div>
+      <label class="f">Pit address</label><input type="text" id="pitVal" value="${esc(cur)}" placeholder="e.g. B7" style="text-transform:uppercase">
+      <div class="row" style="margin-top:14px"><span class="sp"></span><button class="btn" data-act="modal-close">Cancel</button><button class="btn primary" data-act="pit-save" data-n="${n}">Save</button></div>`);
+  },
+  'pit-save': async el => {
+    const v = $('#pitVal').value.trim().toUpperCase(), n = el.dataset.n;
+    await Store.put('pits_' + (evKey() || 'none'), n, { pit: v || null, by: who(), t: Date.now() });
+    closeModal(); renderPitResults(); if (current === 'pits') renderAll('nav');
+  },
+  'pitmap-zoom': () => openModal(`<div class="row"><span class="sp"></span><button class="btn small" data-act="modal-close">✕</button></div><img src="${SD.pitmap}" style="width:100%;margin-top:8px;border-radius:8px">`, 'wide'),
   'ntfy-copy': async el => {
     const v = S[el.dataset.k] || $(`[data-s="${el.dataset.k}"]`).value;
     try { await navigator.clipboard.writeText(v); toast('Copied: ' + v, 'good'); } catch { toast(v); }
@@ -1247,8 +1365,23 @@ document.addEventListener('click', e => {
   const fn = A[el.dataset.act]; if (!fn || el.tagName === 'SELECT') return;
   e.preventDefault(); fn(el, e);
 });
+document.addEventListener('input', e => { if (e.target.id === 'pitSearch') { pitQuery = e.target.value; renderPitResults(); } });
+function shrinkImage(file, max = 1400, q = 0.6) {
+  return new Promise((ok, no) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => { const k = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url); ok(c.toDataURL('image/jpeg', q)); };
+    img.onerror = no; img.src = url;
+  });
+}
 document.addEventListener('change', async e => {
   const el = e.target;
+  if (el.id === 'pitMapFile' && el.files[0]) {
+    try { const data = await shrinkImage(el.files[0]); await Store.put('pitmap_' + (evKey() || 'none'), 'map', { map: data, by: who(), t: Date.now() }); toast('Pit map saved for the team', 'good'); }
+    catch (err) { toast('Could not save the photo: ' + err.message, 'bad'); }
+    return;
+  }
   if (el.dataset.act === 'chk-batt') {
     const m = M.all.find(x => x.key === el.dataset.k); if (!m) return;
     const id = el.value || null;

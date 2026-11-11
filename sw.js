@@ -1,5 +1,5 @@
 /* 1577 Pit — offline cache. Bump CACHE when you change the app files. */
-const CACHE = 'pit-v10';
+const CACHE = 'pit-v11';
 const SHELL = ['./', './index.html', './app.js', './style.css', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
