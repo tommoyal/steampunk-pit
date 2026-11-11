@@ -989,11 +989,19 @@ function matchDetail(key) {
 }
 
 /* ---------------- TV dashboard ---------------- */
+let tvListTouched = false, tvListTimer = null;
 function renderTV(M) {
   const i = M.next ? M.ours.indexOf(M.next) : M.ours.length;
-  const rows = M.ours.slice(Math.max(0, i - 2));
+  const rows = M.ours;
+  const oldList = $('#tvSide .tvlist .mlist'), keep = oldList ? oldList.scrollTop : null;
   if (M.stage === 'selection') { $('#tvSide').innerHTML = selectionBoard(M, true); }
   else $('#tvSide').innerHTML = `<div class="tvbtn" data-act="go" data-v="checklist" title="Open checklist">${M.stage === 'done' && !M.next ? eventSummary(M) : nextCard(M)}</div><div class="card tvlist"><h3>Our matches</h3><div class="mlist">${rows.map(m => matchRow(m, M)).join('') || '<div class="muted">No matches yet.</div>'}</div></div>`;
+  const list = $('#tvSide .tvlist .mlist');
+  if (list) {
+    if (keep != null && tvListTouched) list.scrollTop = keep;
+    else { const nx = list.querySelector('.is-next'); const idx = nx ? [...list.children].indexOf(nx) : -1; if (idx > 0) list.scrollTop = list.children[Math.max(0, idx - 2)].offsetTop - list.offsetTop; }
+    list.onscroll = () => { tvListTouched = true; clearTimeout(tvListTimer); tvListTimer = setTimeout(() => { tvListTouched = false; }, 60000); };
+  }
   const ck = M.next ? checkProgress(M.next) : null;
   const bl = battList().filter(b => b.status !== 'retired');
   const now = Date.now(), l = M.last;
@@ -1644,7 +1652,7 @@ let tickN = 0;
 function tick() {
   const now = Date.now();
   const d = new Date(now);
-  $('#clock').innerHTML = `<span class="cdate">${esc(d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }))}</span><span class="ctime">${pad(d.getHours())}:${pad(d.getMinutes())}<span class="csec">:${pad(d.getSeconds())}</span></span>`;
+  $('#clock').innerHTML = `<span class="cdate">${esc(d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }))}</span><span class="ctime">${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}</span>`;
   document.querySelectorAll('[data-cd]').forEach(el => { el.textContent = fmtCD(+el.dataset.cd - now); });
   updateGauges();
   document.querySelectorAll('[data-el]').forEach(el => { el.textContent = fmtEl(now - +el.dataset.el); });
