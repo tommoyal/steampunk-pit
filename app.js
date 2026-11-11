@@ -442,14 +442,22 @@ function notices(M) {
   if (M.delay != null && Math.abs(M.delay) >= 3 * 60000) out.push(`<div class="notice info">Field is running <b>${Math.round(Math.abs(M.delay) / 60000)} min ${M.delay > 0 ? 'behind' : 'ahead of'}</b> schedule.</div>`);
   return out.join('');
 }
+function rankWindow(M, R) {
+  const rows = R.rows, i = rows.findIndex(r => r.team === M.T);
+  if (i < 0) return '';
+  let a = Math.max(0, i - 2), b = Math.min(rows.length, a + 5); a = Math.max(0, b - 5);
+  return `<div class="rwin">${rows.slice(a, b).map(r => `<div class="rw ${r.team === M.T ? 'us' : 'blur'}">
+    <span class="rr">#${r.rank}</span><span class="rt">${r.team}</span><span class="rn">${esc(D.teams[r.team] || '')}</span>
+    <span class="rs">${Number(r.rs ?? 0).toFixed(R.rsPrec)}</span></div>`).join('')}</div>`;
+}
 function rankCardHTML(M, tv) {
   const r = M.myRank, R = D.rankings;
   if (!r) return `<h3>Ranking</h3><div class="muted">Rankings appear after the first quals.</div>`;
   const proj = M.expWins != null ? `${(r.w + M.expWins).toFixed(1)} wins projected (${M.remainingQ.length} quals left)` : '';
-  if (tv) return `<h3>Ranking</h3><div class="tvbig">#${r.rank}<span class="tvsub"> of ${R.rows.length}</span></div>
-    <div class="tvsub">${r.w}-${r.l}-${r.t} · ${esc(R.rsName)} ${Number(r.rs ?? 0).toFixed(R.rsPrec)}</div><div class="tvsub">${proj}</div>`;
+  if (tv) return `<div class="row" style="margin-bottom:6px"><h3 style="margin:0">Ranking</h3><span class="sp"></span><span class="tvsub">#${r.rank} of ${R.rows.length} · ${r.w}-${r.l}-${r.t}</span></div>${rankWindow(M, R)}`;
   return `<div class="bigstat"><div><b>#${r.rank}</b><span>of ${R.rows.length}</span></div><div><b>${r.w}-${r.l}-${r.t}</b><span>W-L-T</span></div>
     <div><b>${Number(r.rs ?? 0).toFixed(R.rsPrec)}</b><span>${esc(R.rsName)}</span></div>${r.extra != null && R.extraName ? `<div><b>${r.extra}</b><span>${esc(R.extraName)}</span></div>` : ''}</div>
+    ${rankWindow(M, R)}
     ${proj ? `<div class="muted small" style="margin-top:8px">Statbotics: ${proj}</div>` : ''}`;
 }
 
