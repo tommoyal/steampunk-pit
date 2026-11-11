@@ -1077,24 +1077,24 @@ document.addEventListener('touchend', unlockAudio);
 // iPhone pauses audio when the app goes to the background; wake it again when it comes back
 document.addEventListener('visibilitychange', () => { if (!document.hidden && actx && actx.state !== 'running') actx.resume().then(renderTop).catch(() => { }); });
 window.addEventListener('focus', () => { if (actx && actx.state !== 'running') actx.resume().then(renderTop).catch(() => { }); });
-/* Alarm: clean, loud "alarm-clock" beeps (square + sine, no distortion), through a limiter for volume. */
+/* Alarm: a soft, bell-like chime (pure sine tones that fade out), played loud and repeated. */
 let alarmOut = null;
 function alarmChain() {
   if (alarmOut) return alarmOut;
   const comp = actx.createDynamicsCompressor();
-  comp.threshold.value = -12; comp.ratio.value = 8; comp.attack.value = 0.003; comp.release.value = 0.1;
-  const master = actx.createGain(); master.gain.value = 0.8;
+  comp.threshold.value = -14; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.2;
+  const master = actx.createGain(); master.gain.value = 1;
   comp.connect(master).connect(actx.destination);
   return (alarmOut = comp);
 }
-function tone(t, f, len) {
+function bell(t, f, len) {
   const g = actx.createGain();
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t + 0.008);
-  g.gain.setValueAtTime(0.5, t + len - 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.9, t + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + len);
   g.connect(alarmChain());
-  for (const [type, vol] of [['square', 0.35], ['sine', 1]]) {
-    const o = actx.createOscillator(), v = actx.createGain(); o.type = type; o.frequency.value = f; v.gain.value = vol;
-    o.connect(v).connect(g); o.start(t); o.stop(t + len + 0.02);
+  for (const [mul, vol] of [[1, 1], [2, 0.25]]) {   // fundamental + a soft octave = bell tone
+    const o = actx.createOscillator(), v = actx.createGain(); o.type = 'sine'; o.frequency.value = f * mul; v.gain.value = vol;
+    o.connect(v).connect(g); o.start(t); o.stop(t + len + 0.05);
   }
 }
 async function beep(urgent) {
@@ -1103,12 +1103,11 @@ async function beep(urgent) {
   if (actx.state !== 'running') { try { await actx.resume(); } catch { } }
   if (actx.state !== 'running') return;
   let t = actx.currentTime + 0.03;
-  if (urgent) {
-    // ~3 s: three groups of four quick beeps (classic alarm clock)
-    for (let r = 0; r < 3; r++) { for (let i = 0; i < 4; i++) { tone(t, 1050, 0.1); t += 0.15; } t += 0.4; }
-  } else {
-    // ~1 s: rising two-note chime, twice
-    for (let i = 0; i < 2; i++) { tone(t, 784, 0.18); t += 0.22; tone(t, 1175, 0.26); t += 0.36; }
+  const notes = [784, 988, 1175];               // G5 B5 D6: a friendly rising "ding-ding-ding"
+  const rounds = urgent ? 4 : 2;                 // urgent ~4.5 s, normal ~2 s
+  for (let r = 0; r < rounds; r++) {
+    for (const f of notes) { bell(t, f, 0.7); t += 0.16; }
+    t += 0.65;
   }
 }
 /* Phone vibration (Android browsers; iPhone Safari does not allow websites to vibrate). */
