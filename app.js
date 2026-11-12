@@ -934,7 +934,10 @@ function viewSettings() {
   <div class="card"><h3>Checklist items</h3><div class="muted small">One per line.</div>
     <textarea data-s="checklist" style="min-height:170px">${esc(S.checklist.join('\n'))}</textarea></div>
   <div class="card"><h3>Set up other phones</h3><div class="muted small">Copies a link with this device's event, keys and sync settings. Send it to team members — opening it sets their app up.</div>
-    <div class="row" style="margin-top:8px"><button class="btn small" data-act="copy-setup">Copy setup link</button></div><div id="setupOut"></div></div>
+    <div class="row" style="margin-top:8px"><button class="btn small" data-act="copy-setup">Copy setup link</button></div><div id="setupOut"></div>
+    <label class="f" style="margin-top:12px">Got a setup link? Paste it here (iPhone home-screen app)</label>
+    <div class="row" style="flex-wrap:nowrap"><input type="text" id="setupIn" placeholder="https://tommoyal.github.io/steampunk-pit/#setup=…" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="btn small primary" data-act="use-setup">Use link</button></div></div>
   <div style="position:sticky;bottom:80px;display:flex;gap:10px"><button class="btn primary" data-act="save-settings" style="flex:1;padding:12px">Save</button></div>`;
 }
 
@@ -1451,6 +1454,11 @@ const A = {
     const link = location.href.split('#')[0] + '#setup=' + code;
     try { await navigator.clipboard.writeText(link); toast('Setup link copied — send it to the team', 'good'); }
     catch { $('#setupOut').innerHTML = `<label class="f">Copy this link</label><textarea readonly onclick="this.select()">${esc(link)}</textarea>`; }
+  },
+  'use-setup': () => {
+    const v = ($('#setupIn')?.value || '').trim(); const i = v.indexOf('setup=');
+    if (i < 0) { toast('Paste the whole setup link (it has “#setup=” in it)', 'bad'); return; }
+    applySetupCode(v.slice(i + 6).trim());
   },
   'save-settings': () => readSettingsForm(true)
 };

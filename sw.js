@@ -1,7 +1,7 @@
 /* 1577 Pit — offline support.
    Network-first: when online, always load the newest files from the server;
    the cache is only used when the network is unavailable (offline at events). */
-const CACHE = 'pit-v19';
+const CACHE = 'pit-v20';
 const FB = 'https://www.gstatic.com/firebasejs/10.12.2/';
 const EXTERNAL = [FB + 'firebase-app-compat.js', FB + 'firebase-firestore-compat.js', FB + 'firebase-auth-compat.js',
   'https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap'];
